@@ -51,6 +51,9 @@ function startServer(apiKey) {
     PORT:                         String(serverPort),
     HOSTNAME:                     '127.0.0.1',
     NODE_ENV:                     'production',
+    // Writable directory for uploads, generated images, and assets.json.
+    // Must be outside Program Files to avoid EPERM on write.
+    USER_DATA_DIR:                app.getPath('userData'),
     // Supabase client is unused at runtime but the module import
     // needs non-empty strings to avoid a createClient() crash.
     NEXT_PUBLIC_SUPABASE_URL:     process.env.NEXT_PUBLIC_SUPABASE_URL     || 'http://localhost',

@@ -3,6 +3,7 @@ import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
 import { GoogleGenAI, type Part, type Content, type GenerateContentResponse } from '@google/genai';
 import { findMatchingImages } from '../../../lib/tagMatcher';
+import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../lib/storage';
 
 // ─── Model map ────────────────────────────────────────────────────────────────
 // Gemini 3.1 Flash Image series (v1beta image-generation capable)
@@ -62,19 +63,19 @@ function getAI(): GoogleGenAI {
   return new GoogleGenAI({ apiKey });
 }
 
-/** Save a base64 PNG to public/<subdir>/ and return its public URL path. */
-async function persistImage(base64: string, subdir: 'generated' | 'uploads'): Promise<string> {
+/** Save a base64 PNG to the generated images directory and return its URL. */
+async function persistImage(base64: string): Promise<string> {
   const filename = `${Date.now()}-${Math.random().toString(36).slice(2)}.png`;
-  const outDir   = path.join(process.cwd(), 'public', subdir);
+  const outDir   = getGeneratedDir();
   await mkdir(outDir, { recursive: true });
   await writeFile(path.join(outDir, filename), Buffer.from(base64, 'base64'));
-  return `/${subdir}/${filename}`;
+  return makeGeneratedUrl(filename);
 }
 
-/** Read a local /public path or remote URL and return a raw base64 string. */
+/** Read a local URL or remote URL and return a raw base64 string. */
 async function toBase64(urlOrPath: string): Promise<string> {
   if (urlOrPath.startsWith('/')) {
-    const buf = await readFile(path.join(process.cwd(), 'public', urlOrPath));
+    const buf = await readFile(urlToFilePath(urlOrPath));
     return buf.toString('base64');
   }
   const res = await fetch(urlOrPath);
@@ -199,7 +200,7 @@ export async function POST(request: NextRequest) {
       });
 
       const { imageData } = parseImageResponse(response);
-      const imageUrl = await persistImage(imageData, 'generated');
+      const imageUrl = await persistImage(imageData);
       return NextResponse.json({ success: true, imageUrl, nodeId });
     }
 
@@ -241,7 +242,7 @@ export async function POST(request: NextRequest) {
       console.log('[generate] model text alongside image:', textHint.slice(0, 200));
     }
 
-    const imageUrl = await persistImage(imageData, 'generated');
+    const imageUrl = await persistImage(imageData);
     return NextResponse.json({
       success: true,
       imageUrl,
