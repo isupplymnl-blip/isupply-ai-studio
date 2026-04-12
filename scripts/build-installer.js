@@ -74,6 +74,6 @@ const flag =
   arg === '--linux' ? '--linux' :
   '';                              // no flag = current platform
 
-run(`npx electron-builder build ${flag} --config`);
+run(`npx electron-builder build ${flag}`);
 
 console.log('\n✅  Installer written to dist-electron/\n');
