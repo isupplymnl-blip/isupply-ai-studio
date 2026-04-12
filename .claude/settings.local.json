@@ -14,7 +14,8 @@
       "Bash(npx next:*)",
       "Bash(cat app/api/assets/[id]/route.ts)",
       "Bash(cat next.config.ts)",
-      "Bash(cat next.config.js)"
+      "Bash(cat next.config.js)",
+      "Bash(node -e ':*)"
     ]
   }
 }
