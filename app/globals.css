@@ -1,26 +1,134 @@
 @import "tailwindcss";
 
+/* ── Dark theme tokens ────────────────────────────────────────────────────── */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --studio-bg:           #0A0A0B;
+  --studio-surface:      #111113;
+  --studio-elevated:     #1A1A1F;
+  --studio-border:       #2A2A35;
+  --studio-border-hi:    #3A3A4A;
+  --studio-purple:       #7C3AED;
+  --studio-teal:         #0D9488;
+  --studio-coral:        #F43F5E;
+  --studio-text:         #F1F0F5;
+  --studio-text-sec:     #9090A8;
+  --studio-text-muted:   #55556A;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+/* ── Keyframes ────────────────────────────────────────────────────────────── */
+@keyframes gradient-dash {
+  to { stroke-dashoffset: -18; }
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
 }
 
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── React Flow canvas overrides ─────────────────────────────────────────── */
+.react-flow {
+  background: var(--studio-bg);
+}
+
+/* Attribution */
+.react-flow__attribution {
+  background: transparent;
+  color: var(--studio-text-muted);
+  font-size: 9px;
+}
+
+/* Controls */
+.react-flow__controls {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+.react-flow__controls-button {
+  background: #111113 !important;
+  border-bottom: 1px solid #2A2A35 !important;
+  color: #9090A8 !important;
+  fill: #9090A8 !important;
+}
+.react-flow__controls-button:hover {
+  background: #1A1A1F !important;
+  fill: #F1F0F5 !important;
+}
+
+/* Minimap */
+.react-flow__minimap {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 12px rgba(0,0,0,0.5);
+}
+.react-flow__minimap-svg {
+  background: #111113;
+}
+
+/* Node wrapper */
+.react-flow__node {
+  border-radius: 12px;
+}
+
+/* Handle hover glow */
+.react-flow__handle:hover {
+  transform: scale(1.4);
+  transition: transform 0.15s;
+}
+
+/* Selection box */
+.react-flow__selection {
+  background: rgba(124, 58, 237, 0.06);
+  border: 1px solid rgba(124, 58, 237, 0.4);
+}
+
+/* ── Base styles ──────────────────────────────────────────────────────────── */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--studio-bg);
+  color: var(--studio-text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
+
+/* Range input track */
+input[type='range'] {
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  background: #2A2A35;
+  outline: none;
+}
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #7C3AED;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(124, 58, 237, 0.5);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar        { width: 4px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: #2A2A35; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #3A3A4A; }

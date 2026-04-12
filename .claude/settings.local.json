@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh api:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "Bash(python3 -m json.tool)",
+      "Bash(cat ~/.claude/plugins/marketplaces/claude-plugins-official/plugins/skill-creator/skills/*.md)",
+      "Bash(npm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run:*)",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(npx next:*)",
+      "Bash(cat app/api/assets/[id]/route.ts)",
+      "Bash(cat next.config.ts)",
+      "Bash(cat next.config.js)"
+    ]
+  }
+}

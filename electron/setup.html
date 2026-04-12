@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>iSupply AI Studio — Setup</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    background: #0A0A0B;
+    color: #F1F0F5;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+
+  .card {
+    width: 420px;
+    background: #111113;
+    border: 1px solid #2A2A35;
+    border-radius: 18px;
+    padding: 36px 32px;
+    box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+  }
+
+  .logo {
+    width: 48px; height: 48px;
+    background: linear-gradient(135deg, #7C3AED, #0D9488);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 900; font-size: 17px; color: #fff;
+    margin-bottom: 20px;
+  }
+
+  h1 { font-size: 20px; font-weight: 700; color: #F1F0F5; margin-bottom: 4px; }
+  .sub { font-size: 12px; color: #55556A; margin-bottom: 28px; line-height: 1.6; }
+
+  label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+          letter-spacing: .08em; color: #55556A; margin-bottom: 6px; }
+
+  .input-wrap {
+    position: relative;
+    margin-bottom: 10px;
+  }
+  .input-wrap input {
+    width: 100%; padding: 10px 40px 10px 12px;
+    background: #1A1A1F; border: 1px solid #2A2A35; border-radius: 8px;
+    color: #F1F0F5; font-size: 13px; outline: none;
+    font-family: 'Courier New', monospace;
+    transition: border-color .15s;
+  }
+  .input-wrap input:focus { border-color: #7C3AED; }
+  .input-wrap input.error { border-color: #F43F5E; }
+  .toggle-vis {
+    position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; color: #55556A; cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 2px;
+  }
+  .toggle-vis:hover { color: #9090A8; }
+
+  .hint {
+    font-size: 10px; color: #55556A; margin-bottom: 20px; line-height: 1.6;
+  }
+  .hint a { color: #7C3AED; text-decoration: none; }
+  .hint a:hover { text-decoration: underline; }
+
+  .error-msg {
+    font-size: 11px; color: #F43F5E;
+    background: #F43F5E11; border: 1px solid #F43F5E33;
+    border-radius: 7px; padding: 8px 12px; margin-bottom: 14px;
+    display: none;
+  }
+  .error-msg.visible { display: block; }
+
+  button.primary {
+    width: 100%; padding: 12px;
+    background: linear-gradient(135deg, #7C3AED, #0D9488);
+    border: none; border-radius: 9px;
+    color: #fff; font-size: 13px; font-weight: 700;
+    cursor: pointer; transition: opacity .15s;
+    letter-spacing: .02em;
+  }
+  button.primary:hover { opacity: .88; }
+  button.primary:disabled { opacity: .4; cursor: not-allowed; }
+
+  .loading {
+    display: none; text-align: center; padding: 20px 0 4px;
+  }
+  .loading.visible { display: block; }
+  .spinner {
+    width: 28px; height: 28px;
+    border: 2px solid #2A2A35; border-top-color: #7C3AED;
+    border-radius: 50%; margin: 0 auto 10px;
+    animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading p { font-size: 12px; color: #55556A; }
+
+  .divider {
+    border: none; border-top: 1px solid #2A2A35;
+    margin: 22px 0;
+  }
+  .footer { font-size: 10px; color: #55556A; text-align: center; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">iS</div>
+  <h1>iSupply AI Studio</h1>
+  <p class="sub">Enter your Gemini API key to get started. This is stored locally and never sent anywhere except Google's API.</p>
+
+  <label for="apiKey">Gemini API Key</label>
+  <div class="input-wrap">
+    <input type="password" id="apiKey" placeholder="AIza…" autocomplete="off" spellcheck="false" />
+    <button class="toggle-vis" id="toggleVis" title="Show / hide key">👁</button>
+  </div>
+
+  <div class="hint">
+    Don't have a key?
+    <a href="#" id="linkAIStudio">Get one free at Google AI Studio →</a>
+    <br/>After creating a project, copy your key from the API Keys page.
+  </div>
+
+  <div class="error-msg" id="errorMsg"></div>
+
+  <button class="primary" id="saveBtn">Save &amp; Launch</button>
+
+  <div class="loading" id="loading">
+    <div class="spinner"></div>
+    <p>Starting iSupply AI Studio…</p>
+  </div>
+
+  <hr class="divider" />
+  <p class="footer">Your key is stored in your system's user-data folder and is never shared.</p>
+</div>
+
+<script>
+  const input    = document.getElementById('apiKey');
+  const saveBtn  = document.getElementById('saveBtn');
+  const errorMsg = document.getElementById('errorMsg');
+  const loading  = document.getElementById('loading');
+  const toggleBtn= document.getElementById('toggleVis');
+  const aiLink   = document.getElementById('linkAIStudio');
+  let   visible  = false;
+
+  // Receive pre-filled key from main process (settings change)
+  if (window.studio?.onPrefillKey) {
+    window.studio.onPrefillKey(key => {
+      input.value = key;
+    });
+  }
+
+  toggleBtn.addEventListener('click', () => {
+    visible = !visible;
+    input.type = visible ? 'text' : 'password';
+    toggleBtn.textContent = visible ? '🙈' : '👁';
+  });
+
+  aiLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    // Electron will intercept and open in system browser via setWindowOpenHandler
+    window.open('https://aistudio.google.com/app/apikey', '_blank');
+  });
+
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.classList.add('visible');
+    input.classList.add('error');
+  }
+  function clearError() {
+    errorMsg.classList.remove('visible');
+    input.classList.remove('error');
+  }
+
+  saveBtn.addEventListener('click', async () => {
+    clearError();
+    const key = input.value.trim();
+    if (!key) { showError('Please enter your Gemini API key.'); return; }
+    if (!key.startsWith('AIza') && key.length < 20) {
+      showError('That doesn\'t look like a valid Gemini API key. It should start with "AIza".');
+      return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = 'Saving…';
+    loading.classList.add('visible');
+
+    const result = await window.studio.saveApiKey(key);
+
+    if (result?.error) {
+      showError(result.error);
+      saveBtn.disabled = false;
+      saveBtn.textContent = 'Save & Launch';
+      loading.classList.remove('visible');
+    }
+    // On success, the main process closes this window and opens the app.
+  });
+
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') saveBtn.click();
+  });
+</script>
+</body>
+</html>
