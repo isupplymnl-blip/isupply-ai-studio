@@ -15,7 +15,12 @@
       "Bash(cat app/api/assets/[id]/route.ts)",
       "Bash(cat next.config.ts)",
       "Bash(cat next.config.js)",
-      "Bash(node -e ':*)"
+      "Bash(node -e ':*)",
+      "Bash(gh run:*)",
+      "Bash(where gh:*)",
+      "Bash(node -e \"const d=JSON.parse\\(require\\('fs'\\).readFileSync\\('/dev/stdin','utf8'\\)\\); d.workflow_runs?.forEach\\(r=>console.log\\(r.id, r.status, r.conclusion, r.name, r.created_at\\)\\)\")",
+      "Bash(curl -s \"https://api.github.com/repos/isupplymnl-blip/isupply-ai-studio/actions/runs?per_page=3\" -o runs.json)",
+      "Bash(rm -f runs.json)"
     ]
   }
 }
