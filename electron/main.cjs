@@ -42,12 +42,14 @@ function getServerDir() {
     : path.join(__dirname, '..');
 }
 
-function startServer(apiKey) {
+function startServer(config) {
   const serverDir = getServerDir();
 
   const env = {
     ...process.env,
-    GEMINI_API_KEY:               apiKey,
+    GEMINI_API_KEY:               config.geminiApiKey ?? '',
+    ECCO_API_KEY:                 config.eccoApiKey   ?? '',
+    AI_PROVIDER:                  config.provider     ?? 'gemini',
     PORT:                         String(serverPort),
     HOSTNAME:                     '127.0.0.1',
     NODE_ENV:                     'production',
@@ -113,8 +115,8 @@ function buildAppMenu() {
       label: 'iSupply AI Studio',
       submenu: [
         {
-          label: 'Settings — Change API Key',
-          click: () => openSetupWindow(config.geminiApiKey ?? ''),
+          label: 'Settings — Change API Key / Provider',
+          click: () => openSetupWindow(),
         },
         { type: 'separator' },
         {
@@ -148,11 +150,11 @@ function buildAppMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-function openSetupWindow(prefill = '') {
+function openSetupWindow() {
   if (setupWindow) { setupWindow.focus(); return; }
 
   setupWindow = new BrowserWindow({
-    width: 520, height: 500,
+    width: 520, height: 560,
     resizable: false,
     title: 'iSupply AI Studio — Setup',
     backgroundColor: '#0A0A0B',
@@ -165,11 +167,14 @@ function openSetupWindow(prefill = '') {
   setupWindow.setMenuBarVisibility(false);
   setupWindow.loadFile(path.join(__dirname, 'setup.html'));
 
-  if (prefill) {
-    setupWindow.webContents.on('did-finish-load', () => {
-      setupWindow?.webContents.send('prefill-key', prefill);
+  setupWindow.webContents.on('did-finish-load', () => {
+    const cfg = readConfig();
+    setupWindow?.webContents.send('prefill-config', {
+      provider:     cfg.provider     ?? 'gemini',
+      geminiApiKey: cfg.geminiApiKey ?? '',
+      eccoApiKey:   cfg.eccoApiKey   ?? '',
     });
-  }
+  });
 
   setupWindow.on('closed', () => { setupWindow = null; });
 }
@@ -228,22 +233,23 @@ async function openMainWindow() {
 // ─── IPC handlers ─────────────────────────────────────────────────────────────
 ipcMain.handle('get-config', () => readConfig());
 
-ipcMain.handle('save-api-key', async (_e, apiKey) => {
+ipcMain.handle('save-config', async (_e, { provider, apiKey }) => {
   if (!apiKey?.trim()) return { error: 'API key cannot be empty.' };
 
-  const config      = readConfig();
-  const isFirstRun  = !config.geminiApiKey;
-  writeConfig({ ...config, geminiApiKey: apiKey.trim() });
+  const config     = readConfig();
+  const isFirstRun = !config.geminiApiKey && !config.eccoApiKey;
+  const keyField   = provider === 'ecco' ? 'eccoApiKey' : 'geminiApiKey';
+  const newConfig  = { ...config, provider, [keyField]: apiKey.trim() };
+  writeConfig(newConfig);
 
   if (isFirstRun) {
-    startServer(apiKey.trim());
+    startServer(newConfig);
     setupWindow?.close();
     await openMainWindow();
   } else {
-    // Restart server with updated key
     serverProcess?.kill();
     await new Promise(r => setTimeout(r, 1200));
-    startServer(apiKey.trim());
+    startServer(newConfig);
     setupWindow?.close();
     mainWindow?.webContents.reload();
   }
@@ -254,9 +260,10 @@ ipcMain.handle('save-api-key', async (_e, apiKey) => {
 app.whenReady().then(async () => {
   serverPort = await findFreePort(3000);
 
-  const config = readConfig();
-  if (config.geminiApiKey) {
-    startServer(config.geminiApiKey);
+  const config  = readConfig();
+  const hasKey  = config.provider === 'ecco' ? !!config.eccoApiKey : !!config.geminiApiKey;
+  if (hasKey) {
+    startServer(config);
     await openMainWindow();
   } else {
     openSetupWindow();
@@ -273,7 +280,8 @@ app.on('window-all-closed', () => {
 app.on('activate', async () => {
   if (!mainWindow && !setupWindow) {
     const config = readConfig();
-    if (config.geminiApiKey) {
+    const hasKey = config.provider === 'ecco' ? !!config.eccoApiKey : !!config.geminiApiKey;
+    if (hasKey) {
       await openMainWindow();
     } else {
       openSetupWindow();

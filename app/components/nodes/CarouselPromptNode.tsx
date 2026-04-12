@@ -14,7 +14,7 @@ interface CarouselNodeData {
 interface TagStatus { name: string; tags: string[]; matched: boolean; }
 
 export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeData>) {
-  const { onGenerateCarousel, onUpdateData, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect } = useContext(StudioContext);
+  const { onGenerateCarousel, onUpdateData, onUpdateSettings, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, activeProvider } = useContext(StudioContext);
   const allNodes = useNodes();
 
   const [slides, setSlides] = useState<CarouselSlide[]>(data.slides ?? []);
@@ -249,6 +249,41 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
       <div style={{ height: 3, background: '#2A2A35', borderRadius: 2, marginBottom: 9, overflow: 'hidden' }}>
         <div style={{ height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #7C3AED, #0D9488)', width: `${totalCount ? (filledCount / totalCount) * 100 : 0}%`, transition: 'width 0.3s' }} />
       </div>
+
+      {/* EccoAPI inline controls */}
+      {activeProvider === 'ecco' && (
+        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
+          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EccoAPI Settings</p>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+            {(['nanobanana31', 'nanobananapro'] as const).map(m => {
+              const active = (data.settings?.eccoModel ?? 'nanobanana31') === m;
+              return (
+                <button key={m} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { eccoModel: m }); }}
+                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
+                  {m === 'nanobanana31' ? 'NB 3.1' : 'NB Pro'}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+            {(['1K', '2K', '4K'] as const).map(s => {
+              const active = (data.settings?.imageSize ?? '1K') === s;
+              return (
+                <button key={s} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { imageSize: s }); }}
+                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
+                  {s}
+                </button>
+              );
+            })}
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
+              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
+              style={{ accentColor: '#7C3AED' }} />
+            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
+          </label>
+        </div>
+      )}
 
       {/* Generate button */}
       <button

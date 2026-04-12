@@ -19,6 +19,10 @@ export interface NodeSettings {
   safetyFilter?: string;
   model?: string;
   count?: number;
+  // EccoAPI-specific
+  eccoModel?: 'nanobanana31' | 'nanobananapro';
+  imageSize?: '1K' | '2K' | '4K';
+  useGoogleSearch?: boolean;
   // Image Output
   resolution?: string;
   aspectRatio?: string;
@@ -51,6 +55,8 @@ export interface StudioContextType {
   connectingFromId:    string | null;
   onStartConnect:      (nodeId: string) => void;
   onCompleteConnect:   (targetNodeId: string) => void;
+  // Provider
+  activeProvider:      'gemini' | 'ecco';
 }
 
 export const StudioContext = createContext<StudioContextType>({
@@ -67,4 +73,5 @@ export const StudioContext = createContext<StudioContextType>({
   connectingFromId:    null,
   onStartConnect:      () => {},
   onCompleteConnect:   () => {},
+  activeProvider:      'gemini',
 });

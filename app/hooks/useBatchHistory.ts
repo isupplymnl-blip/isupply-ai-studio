@@ -151,6 +151,16 @@ export function useBatchHistory() {
     setGlobalLibrary(prev => [image, ...prev]);
   }, [activeBatchId]);
 
+  /** Add a generated image to a specific batch (for background EccoAPI completions) */
+  const addGeneratedImageToBatch = useCallback((batchId: string, image: GeneratedImage) => {
+    setBatches(prev => prev.map(b =>
+      b.id === batchId
+        ? { ...b, generatedImages: [image, ...b.generatedImages] }
+        : b
+    ));
+    setGlobalLibrary(prev => [image, ...prev]);
+  }, []);
+
   /** Remove from active batch only (image still in global library) */
   const removeGeneratedImage = useCallback((imageId: string) => {
     setBatches(prev => prev.map(b =>
@@ -169,6 +179,6 @@ export function useBatchHistory() {
     batches, activeBatch, activeBatchId, globalLibrary,
     saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch,
     renameBatch, deleteBatch,
-    addGeneratedImage, removeGeneratedImage, removeFromGlobalLibrary,
+    addGeneratedImage, addGeneratedImageToBatch, removeGeneratedImage, removeFromGlobalLibrary,
   };
 }

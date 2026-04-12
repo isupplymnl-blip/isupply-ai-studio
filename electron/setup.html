@@ -38,10 +38,23 @@
   }
 
   h1 { font-size: 20px; font-weight: 700; color: #F1F0F5; margin-bottom: 4px; }
-  .sub { font-size: 12px; color: #55556A; margin-bottom: 28px; line-height: 1.6; }
+  .sub { font-size: 12px; color: #55556A; margin-bottom: 24px; line-height: 1.6; }
 
   label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase;
           letter-spacing: .08em; color: #55556A; margin-bottom: 6px; }
+
+  .provider-row {
+    display: flex; gap: 6px; margin-bottom: 20px;
+  }
+  .provider-btn {
+    flex: 1; padding: 9px; border-radius: 8px;
+    border: 1px solid #2A2A35; background: #1A1A1F;
+    color: #55556A; font-size: 11px; font-weight: 600;
+    cursor: pointer; transition: all .15s;
+  }
+  .provider-btn.active {
+    background: #7C3AED22; border-color: #7C3AED; color: #F1F0F5;
+  }
 
   .input-wrap {
     position: relative;
@@ -112,9 +125,15 @@
 <div class="card">
   <div class="logo">iS</div>
   <h1>iSupply AI Studio</h1>
-  <p class="sub">Enter your Gemini API key to get started. This is stored locally and never sent anywhere except Google's API.</p>
+  <p class="sub">Choose your AI provider and enter your API key. Stored locally, never uploaded.</p>
 
-  <label for="apiKey">Gemini API Key</label>
+  <label>AI Provider</label>
+  <div class="provider-row">
+    <button id="btnGemini" class="provider-btn active" onclick="selectProvider('gemini')">Google Gemini</button>
+    <button id="btnEcco"   class="provider-btn"        onclick="selectProvider('ecco')">EccoAPI (Nano Banana)</button>
+  </div>
+
+  <label id="keyLabel">Gemini API Key</label>
   <div class="input-wrap">
     <input type="password" id="apiKey" placeholder="AIza…" autocomplete="off" spellcheck="false" />
     <button class="toggle-vis" id="toggleVis" title="Show / hide key">👁</button>
@@ -122,8 +141,7 @@
 
   <div class="hint">
     Don't have a key?
-    <a href="#" id="linkAIStudio">Get one free at Google AI Studio →</a>
-    <br/>After creating a project, copy your key from the API Keys page.
+    <a href="#" id="linkProvider">Get one free →</a>
   </div>
 
   <div class="error-msg" id="errorMsg"></div>
@@ -140,31 +158,63 @@
 </div>
 
 <script>
-  const input    = document.getElementById('apiKey');
-  const saveBtn  = document.getElementById('saveBtn');
-  const errorMsg = document.getElementById('errorMsg');
-  const loading  = document.getElementById('loading');
-  const toggleBtn= document.getElementById('toggleVis');
-  const aiLink   = document.getElementById('linkAIStudio');
-  let   visible  = false;
+  const input     = document.getElementById('apiKey');
+  const saveBtn   = document.getElementById('saveBtn');
+  const errorMsg  = document.getElementById('errorMsg');
+  const loading   = document.getElementById('loading');
+  const toggleBtn = document.getElementById('toggleVis');
+  const keyLabel  = document.getElementById('keyLabel');
+  const linkProv  = document.getElementById('linkProvider');
+  let visible     = false;
+  let provider    = 'gemini';
 
-  // Receive pre-filled key from main process (settings change)
-  if (window.studio?.onPrefillKey) {
-    window.studio.onPrefillKey(key => {
-      input.value = key;
+  const PROVIDERS = {
+    gemini: {
+      label:       'Gemini API Key',
+      placeholder: 'AIza…',
+      hint:        'Get one free at Google AI Studio →',
+      url:         'https://aistudio.google.com/app/apikey',
+      validate:    k => k.startsWith('AIza') && k.length >= 20,
+      errMsg:      'Should start with "AIza" and be at least 20 characters.',
+    },
+    ecco: {
+      label:       'EccoAPI Key',
+      placeholder: 'nk_live_…',
+      hint:        'Get one free at EccoAPI Dashboard →',
+      url:         'https://eccoapi.com/dashboard',
+      validate:    k => k.startsWith('nk_live_') && k.length >= 20,
+      errMsg:      'Should start with "nk_live_" and be at least 20 characters.',
+    },
+  };
+
+  function selectProvider(p) {
+    provider = p;
+    document.getElementById('btnGemini').classList.toggle('active', p === 'gemini');
+    document.getElementById('btnEcco').classList.toggle('active',   p === 'ecco');
+    const cfg = PROVIDERS[p];
+    keyLabel.textContent  = cfg.label;
+    input.placeholder     = cfg.placeholder;
+    linkProv.textContent  = cfg.hint;
+    input.value           = '';
+    clearError();
+  }
+
+  if (window.studio?.onPrefillConfig) {
+    window.studio.onPrefillConfig(cfg => {
+      selectProvider(cfg.provider ?? 'gemini');
+      input.value = cfg.provider === 'ecco' ? (cfg.eccoApiKey ?? '') : (cfg.geminiApiKey ?? '');
     });
   }
+
+  linkProv.addEventListener('click', e => {
+    e.preventDefault();
+    window.open(PROVIDERS[provider].url, '_blank');
+  });
 
   toggleBtn.addEventListener('click', () => {
     visible = !visible;
     input.type = visible ? 'text' : 'password';
     toggleBtn.textContent = visible ? '🙈' : '👁';
-  });
-
-  aiLink.addEventListener('click', (e) => {
-    e.preventDefault();
-    // Electron will intercept and open in system browser via setWindowOpenHandler
-    window.open('https://aistudio.google.com/app/apikey', '_blank');
   });
 
   function showError(msg) {
@@ -180,17 +230,16 @@
   saveBtn.addEventListener('click', async () => {
     clearError();
     const key = input.value.trim();
-    if (!key) { showError('Please enter your Gemini API key.'); return; }
-    if (!key.startsWith('AIza') && key.length < 20) {
-      showError('That doesn\'t look like a valid Gemini API key. It should start with "AIza".');
+    if (!key) { showError('Please enter an API key.'); return; }
+    if (!PROVIDERS[provider].validate(key)) {
+      showError(PROVIDERS[provider].errMsg);
       return;
     }
-
     saveBtn.disabled = true;
     saveBtn.textContent = 'Saving…';
     loading.classList.add('visible');
 
-    const result = await window.studio.saveApiKey(key);
+    const result = await window.studio.saveConfig({ provider, apiKey: key });
 
     if (result?.error) {
       showError(result.error);
@@ -198,12 +247,9 @@
       saveBtn.textContent = 'Save & Launch';
       loading.classList.remove('visible');
     }
-    // On success, the main process closes this window and opens the app.
   });
 
-  input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') saveBtn.click();
-  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') saveBtn.click(); });
 </script>
 </body>
 </html>

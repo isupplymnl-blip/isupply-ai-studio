@@ -4,22 +4,20 @@ import { useCallback, useContext, useLayoutEffect, useRef, useState } from 'reac
 import { NodeProps } from 'reactflow';
 import { StudioContext } from '../../context/StudioContext';
 
+import type { NodeSettings } from '../../context/StudioContext';
+
 interface ModelCreationData {
   label: string;
   isLoading?: boolean;
   imageUrl?: string;
   error?: string;
-  settings?: {
-    style: string;
-    lighting: string;
-    background: string;
-  };
+  settings?: NodeSettings;
 }
 
 const STYLES = ['Realistic', 'Editorial', 'Commercial', 'Artistic'];
 
 export default function ModelCreationNode({ id, data }: NodeProps<ModelCreationData>) {
-  const { onCreateModel, onSelectNode, onAddToLibrary, onDeleteNode } = useContext(StudioContext);
+  const { onCreateModel, onUpdateSettings, onSelectNode, onAddToLibrary, onDeleteNode, activeProvider } = useContext(StudioContext);
   const [description, setDescription] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -30,7 +28,7 @@ export default function ModelCreationNode({ id, data }: NodeProps<ModelCreationD
     el.style.height = el.scrollHeight + 'px';
   }, [description]);
 
-  const settings = data.settings ?? { style: 'Realistic', lighting: 'Studio White', background: 'Pure White' };
+  const settings = data.settings ?? {};
   const { isLoading, imageUrl, error } = data;
 
   const handleGenerate = useCallback(async () => {
@@ -124,6 +122,35 @@ export default function ModelCreationNode({ id, data }: NodeProps<ModelCreationD
           </div>
         )}
       </div>
+
+      {/* EccoAPI inline controls */}
+      {activeProvider === 'ecco' && (
+        <div style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
+          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EccoAPI Settings</p>
+          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+            {(['nanobanana31', 'nanobananapro'] as const).map(m => {
+              const active = (data.settings?.eccoModel ?? 'nanobananapro') === m;
+              return (
+                <button key={m} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { eccoModel: m }); }}
+                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#F43F5E' : '#2A2A35'}`, background: active ? '#F43F5E' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
+                  {m === 'nanobanana31' ? 'NB 3.1' : 'NB Pro'}
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ display: 'flex', gap: 4 }}>
+            {(['1K', '2K', '4K'] as const).map(s => {
+              const active = (data.settings?.imageSize ?? '1K') === s;
+              return (
+                <button key={s} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { imageSize: s }); }}
+                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#F43F5E' : '#2A2A35'}`, background: active ? '#F43F5E' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
+                  {s}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <button onClick={e => { e.stopPropagation(); handleGenerate(); }} disabled={!description.trim() || Boolean(isLoading)}
         style={{

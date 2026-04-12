@@ -172,9 +172,10 @@ export async function POST(request: NextRequest) {
       nodeId: string;
       type?: 'slide' | 'model-creation';
       settings?: Record<string, unknown>;
+      referenceUrls?: string[];
     };
 
-    const { prompt, nodeId, type, settings = {} } = body;
+    const { prompt, nodeId, type, settings = {}, referenceUrls = [] } = body;
 
     if (!prompt?.trim()) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -206,7 +207,14 @@ export async function POST(request: NextRequest) {
 
     // ── Slide generation path (text + optional reference images → output) ──────
     const matchedImages = await findMatchingImages(prompt);
-    const aspectRatio   = (settings.aspectRatio as string | undefined) ?? '4:5';
+
+    // Merge canvas-connected reference images with tag-matched ones.
+    const explicitRefs = (referenceUrls as string[])
+      .filter(url => !matchedImages.find(m => m.url === url))
+      .map(url => ({ url, name: 'canvas-reference', matchedTags: [] as string[] }));
+    const allImages = [...explicitRefs, ...matchedImages].slice(0, 14);
+
+    const aspectRatio = (settings.aspectRatio as string | undefined) ?? '4:5';
     const imageSize     = geminiSize((settings.resolution as string | undefined) ?? '1K');
     const textPrompt    = buildSlidePrompt(prompt, settings, matchedImages, aspectRatio);
 
@@ -214,7 +222,7 @@ export async function POST(request: NextRequest) {
     const parts: Part[] = [{ text: textPrompt }];
 
     // Parts 2-N: reference images as inlineData (max 14 to stay within token budget)
-    for (const img of matchedImages.slice(0, 14)) {
+    for (const img of allImages) {
       try {
         const data     = await toBase64(img.url);
         const mimeType = mimeFromUrl(img.url);
@@ -246,7 +254,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       imageUrl,
-      matchedRefs: matchedImages.map(m => m.name),
+      matchedRefs: allImages.map(m => m.name),
       nodeId,
     });
 

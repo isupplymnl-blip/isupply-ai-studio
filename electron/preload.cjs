@@ -2,12 +2,12 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('studio', {
-  /** Returns the saved config object (e.g. { geminiApiKey: '...' }) */
+  /** Returns the saved config object */
   getConfig: () => ipcRenderer.invoke('get-config'),
 
-  /** Save the API key and (re)start the server */
-  saveApiKey: (key) => ipcRenderer.invoke('save-api-key', key),
+  /** Save provider + API key and (re)start the server */
+  saveConfig: (data) => ipcRenderer.invoke('save-config', data),
 
-  /** Listen for prefill-key messages from the main process */
-  onPrefillKey: (cb) => ipcRenderer.on('prefill-key', (_e, key) => cb(key)),
+  /** Listen for prefill-config messages from the main process */
+  onPrefillConfig: (cb) => ipcRenderer.on('prefill-config', (_e, config) => cb(config)),
 });

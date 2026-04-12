@@ -27,6 +27,7 @@ import GradientEdge      from './components/edges/GradientEdge';
 import WelcomeDialog     from './components/WelcomeDialog';
 import { StudioContext, SavedImage, NodeSettings, CarouselSlide } from './context/StudioContext';
 import { useBatchHistory, GeneratedImage } from './hooks/useBatchHistory';
+import { useGenerationQueue, GenerationJob } from './hooks/useGenerationQueue';
 
 // Module-level constants — never re-registered between renders
 const nodeTypes = { uploadNode: UploadNode, promptNode: PromptNode, outputNode: OutputNode, modelCreationNode: ModelCreationNode, carouselNode: CarouselPromptNode };
@@ -35,7 +36,7 @@ const mkEdge = (id: string, src: string, tgt: string): Edge => ({ id, source: sr
 
 // ─── Main canvas component ────────────────────────────────────────────────────
 function StudioCanvas() {
-  const { batches, activeBatch, activeBatchId, globalLibrary, saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch, renameBatch, deleteBatch, addGeneratedImage, removeGeneratedImage, removeFromGlobalLibrary } = useBatchHistory();
+  const { batches, activeBatch, activeBatchId, globalLibrary, saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch, renameBatch, deleteBatch, addGeneratedImage, addGeneratedImageToBatch, removeGeneratedImage, removeFromGlobalLibrary } = useBatchHistory();
   const libraryImages = globalLibrary;
 
   const [nodes, setNodes] = useState<Node[]>(activeBatch?.nodes ?? []);
@@ -66,10 +67,107 @@ function StudioCanvas() {
     return () => clearInterval(t);
   }, [nodes, edges, saveCurrentBatch]);
 
+  // ── Provider & credits state ──────────────────────────────────────────────
+  const [activeProvider, setActiveProvider] = useState<'gemini' | 'ecco'>('gemini');
+  const [eccoCredits, setEccoCredits] = useState<number | null>(null);
+  const activeProviderRef = useRef<'gemini' | 'ecco'>('gemini');
+  activeProviderRef.current = activeProvider;
+  const activeBatchIdRef = useRef(activeBatchId);
+  activeBatchIdRef.current = activeBatchId;
+  // Map outputNodeId → prompt text for background-completed jobs
+  const pendingPromptsRef = useRef(new Map<string, string>());
+
+  useEffect(() => {
+    // localStorage override takes priority over server env var
+    const saved = localStorage.getItem('isupply-provider') as 'gemini' | 'ecco' | null;
+    if (saved) {
+      setActiveProvider(saved);
+    } else {
+      fetch('/api/config')
+        .then(r => r.json())
+        .then(d => { setActiveProvider(d.provider ?? 'gemini'); })
+        .catch(() => {});
+    }
+    const savedCredits = localStorage.getItem('isupply-ecco-credits');
+    if (savedCredits !== null) setEccoCredits(parseFloat(savedCredits));
+  }, []);
+
+  const toggleProvider = useCallback(() => {
+    const next = activeProvider === 'gemini' ? 'ecco' : 'gemini';
+    setActiveProvider(next);
+    localStorage.setItem('isupply-provider', next);
+  }, [activeProvider]);
+
   const edgesRef = useRef<Edge[]>(edges);
   edgesRef.current = edges;
   const nodesRef = useRef<Node[]>(nodes);
   nodesRef.current = nodes;
+
+  // ── EccoAPI generation queue ──────────────────────────────────────────────
+
+  const handleJobComplete = useCallback((job: GenerationJob) => {
+    const imageUrl = job.imageUrl!;
+    const prompt = pendingPromptsRef.current.get(job.nodeId) ?? '';
+    pendingPromptsRef.current.delete(job.nodeId);
+
+    // Update canvas node only if the batch is still active
+    if (job.batchId === activeBatchIdRef.current) {
+      setNodes(nds => nds.map(n =>
+        n.id === job.nodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl, error: undefined } } : n
+      ));
+    }
+    addGeneratedImageToBatch(job.batchId, {
+      id: `img-${Date.now()}`,
+      url: imageUrl,
+      prompt,
+      nodeId: job.nodeId,
+      createdAt: new Date().toISOString(),
+    });
+    if (job.remaining_credits !== undefined) {
+      setEccoCredits(job.remaining_credits);
+      localStorage.setItem('isupply-ecco-credits', String(job.remaining_credits));
+    }
+  }, [addGeneratedImageToBatch]);
+
+  const handleJobError = useCallback((job: GenerationJob) => {
+    if (job.batchId === activeBatchIdRef.current) {
+      setNodes(nds => nds.map(n =>
+        n.id === job.nodeId ? { ...n, data: { ...n.data, isLoading: false, error: job.error ?? 'Generation failed' } } : n
+      ));
+    }
+  }, []);
+
+  const { jobs, addJob, markBatchSeen } = useGenerationQueue({
+    onJobComplete: handleJobComplete,
+    onJobError:    handleJobError,
+  });
+
+  const callEccoGenerate = useCallback(async (
+    outputNodeId: string,
+    body: Record<string, unknown>,
+  ) => {
+    const currentBatchId = activeBatchIdRef.current;
+    pendingPromptsRef.current.set(outputNodeId, (body.prompt as string) ?? '');
+    setNodes(nds => nds.map(n =>
+      n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
+    ));
+    try {
+      const res = await fetch('/api/ecco/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, batchId: currentBatchId }),
+      });
+      const data = await res.json() as { jobId?: string; error?: string };
+      if (!res.ok) throw new Error(data.error ?? 'EccoAPI request failed');
+      addJob({ id: data.jobId!, nodeId: outputNodeId, batchId: currentBatchId });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Generation failed';
+      pendingPromptsRef.current.delete(outputNodeId);
+      setNodes(nds => nds.map(n =>
+        n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
+      ));
+    }
+  }, [addJob]);
 
   // UI state
   const [selectedNodeId,    setSelectedNodeId]   = useState<string | null>(null);
@@ -279,7 +377,7 @@ function StudioCanvas() {
     ));
     try {
       const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await res.json();
+      const data = await res.json() as { imageUrl?: string; error?: string };
       if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
       const promptText = body.prompt as string;
       const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
@@ -302,6 +400,16 @@ function StudioCanvas() {
       ));
     }
   }, [addGeneratedImage]);
+
+  /** Collect URLs of UploadNodes connected as inputs to a given node */
+  const getConnectedUploadUrls = useCallback((nodeId: string): string[] =>
+    edgesRef.current
+      .filter(e => e.target === nodeId)
+      .map(e => nodesRef.current.find(n => n.id === e.source))
+      .filter(n => n?.type === 'uploadNode')
+      .map(n => (n?.data as { savedImage?: { url: string } })?.savedImage?.url)
+      .filter((url): url is string => !!url),
+  []);
 
   const onGenerateSlide = useCallback(async (promptNodeId: string, prompt: string, settings?: NodeSettings) => {
     const count = Math.max(1, settings?.count ?? 1);
@@ -327,22 +435,47 @@ function StudioCanvas() {
     }
 
     if (!allOutIds.length) return;
-    await Promise.all(allOutIds.map(outId =>
-      callGenerate([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {} })
-    ));
-  }, [callGenerate]);
+
+    const referenceUrls = getConnectedUploadUrls(promptNodeId);
+
+    if (activeProviderRef.current === 'ecco') {
+      const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
+      const aspectRatio = settings?.aspectRatio ?? '4:5';
+      const imageSize = settings?.imageSize ?? '1K';
+      await Promise.all(allOutIds.map(outId =>
+        callEccoGenerate(outId, { prompt, nodeId: promptNodeId, model, aspectRatio, imageSize, useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls })
+      ));
+    } else {
+      await Promise.all(allOutIds.map(outId =>
+        callGenerate([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
+      ));
+    }
+  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
 
   const onRegenerate = useCallback(async (outputNodeId: string, lastPrompt: string, settings?: NodeSettings) => {
-    await callGenerate([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {} });
-  }, [callGenerate]);
+    const referenceUrls = getConnectedUploadUrls(outputNodeId);
+    if (activeProviderRef.current === 'ecco') {
+      const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
+      await callEccoGenerate(outputNodeId, { prompt: lastPrompt, nodeId: outputNodeId, model, aspectRatio: settings?.aspectRatio ?? '4:5', imageSize: settings?.imageSize ?? '1K', useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls });
+    } else {
+      await callGenerate([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
+    }
+  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
 
   // Sequential generation for carousel nodes (avoids rate-limit errors)
   const onGenerateCarousel = useCallback(async (nodeId: string, slides: CarouselSlide[], settings?: NodeSettings) => {
     const pending = slides.filter(s => s.prompt.trim() && s.outputNodeId);
+    // Collect reference URLs from UploadNodes connected to this carousel node (fixes the bug where ref images were dropped)
+    const referenceUrls = getConnectedUploadUrls(nodeId);
     for (const slide of pending) {
-      await callGenerate([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {} });
+      if (activeProviderRef.current === 'ecco') {
+        const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
+        await callEccoGenerate(slide.outputNodeId, { prompt: slide.prompt.trim(), nodeId, model, aspectRatio: settings?.aspectRatio ?? '4:5', imageSize: settings?.imageSize ?? '1K', useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls });
+      } else {
+        await callGenerate([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
+      }
     }
-  }, [callGenerate]);
+  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
 
   const onUpdateData = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes(nds => nds.map(n =>
@@ -352,25 +485,48 @@ function StudioCanvas() {
 
   const onCreateModel = useCallback(async (nodeId: string, description: string, settings: NodeSettings) => {
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n));
-    try {
-      const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: description, nodeId, type: 'model-creation', settings }) });
-      const data = await res.json();
-      if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-      setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, error: undefined } } : n));
-      addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: description, nodeId, createdAt: new Date().toISOString() });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Generation failed';
-      setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n));
+    if (activeProviderRef.current === 'ecco') {
+      const style  = (settings?.style      as string | undefined) ?? 'realistic commercial photography';
+      const light  = (settings?.lighting   as string | undefined) ?? 'professional studio lighting';
+      const bg     = (settings?.background as string | undefined) ?? 'pure white';
+      const compositePrompt =
+        `Create a professional composite image with FOUR panels arranged in a single 16:9 frame, ` +
+        `each showing the same model from a different angle. ` +
+        `Panels layout: [Front view] [3/4 angle] [Side profile] [Rear view]. ` +
+        `Model: ${description}. ` +
+        `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+        `All panels must show the same person with consistent appearance. ` +
+        `Ultra high quality, sharp details, fashion photography, highly detailed, no restrictions.`;
+      await callEccoGenerate(nodeId, {
+        prompt: compositePrompt,
+        nodeId,
+        model: (settings?.eccoModel as string | undefined) ?? 'nanobananapro',
+        aspectRatio: '16:9',
+        imageSize: settings?.imageSize ?? '1K',
+        useGoogleSearch: settings?.useGoogleSearch ?? false,
+      });
+    } else {
+      try {
+        const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: description, nodeId, type: 'model-creation', settings }) });
+        const data = await res.json() as { imageUrl?: string; error?: string };
+        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
+        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, error: undefined } } : n));
+        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: description, nodeId, createdAt: new Date().toISOString() });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Generation failed';
+        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n));
+      }
     }
-  }, [addGeneratedImage]);
+  }, [addGeneratedImage, callEccoGenerate]);
 
   const studioCtx = useMemo(() => ({
     onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
     onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
     onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect,
+    activeProvider,
   }), [onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
       onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
-      onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect]);
+      onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, activeProvider]);
 
   // ── Node helpers ─────────────────────────────────────────────────────────
   const nextY = (nds: Node[], type: string, h: number) => {
@@ -423,10 +579,19 @@ function StudioCanvas() {
   };
 
   // ── Batch UI helpers ─────────────────────────────────────────────────────
+  const getBatchJobStatus = (batchId: string): 'polling' | 'error' | 'completed' | null => {
+    const batchJobs = jobs.filter(j => j.batchId === batchId);
+    if (batchJobs.some(j => j.status === 'polling'))                      return 'polling';
+    if (batchJobs.some(j => j.status === 'error'     && !j.seen))         return 'error';
+    if (batchJobs.some(j => j.status === 'completed' && !j.seen))         return 'completed';
+    return null;
+  };
+
   const handleSwitchBatch = (id: string) => {
     saveCurrentBatch(nodes, edges);
     switchBatch(id, nodes, edges);
     setSelectedNodeId(null);
+    markBatchSeen(id);
   };
   const handleNewBatch = () => {
     const name = newBatchName.trim() || `Batch ${batches.length + 1}`;
@@ -479,7 +644,31 @@ function StudioCanvas() {
             <span style={{ fontWeight: 700, fontSize: 13, color: '#F1F0F5' }}>iSupply AI Studio</span>
             <span style={{ fontSize: 9, color: '#55556A', background: '#1A1A1F', padding: '2px 7px', borderRadius: 20, border: '1px solid #2A2A35' }}>Beta</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 11, color: '#9090A8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 11, color: '#9090A8' }}>
+            {activeProvider === 'ecco' && (
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: eccoCredits !== null && eccoCredits < 2 ? '#F59E0B' : '#9090A8' }}>
+                {eccoCredits !== null && eccoCredits < 2 && <span title="Low credits">⚠</span>}
+                {eccoCredits !== null
+                  ? `${eccoCredits < 2 ? 'Low credits' : 'Credits'}: $${eccoCredits.toFixed(2)}`
+                  : 'Credits: —'}
+              </span>
+            )}
+            {/* Provider toggle */}
+            <button
+              onClick={toggleProvider}
+              title={`Switch to ${activeProvider === 'gemini' ? 'EccoAPI' : 'Google Gemini'}`}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                border: `1px solid ${activeProvider === 'ecco' ? '#7C3AED44' : '#0D948844'}`,
+                background: activeProvider === 'ecco' ? '#7C3AED11' : '#0D948811',
+                color: activeProvider === 'ecco' ? '#A78BFA' : '#0D9488',
+                cursor: 'pointer',
+              }}
+            >
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: activeProvider === 'ecco' ? '#A78BFA' : '#0D9488', display: 'inline-block' }} />
+              {activeProvider === 'ecco' ? 'EccoAPI' : 'Gemini'}
+            </button>
             <span>Active batch:</span>
             <span style={{ color: '#F1F0F5', fontWeight: 600 }}>{activeBatch?.name}</span>
           </div>
@@ -552,6 +741,15 @@ function StudioCanvas() {
                           style={{ width: '100%', background: '#111113', border: '1px solid #7C3AED', borderRadius: 4, padding: '2px 6px', color: '#F1F0F5', fontSize: 11, outline: 'none' }} />
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {/* Batch job status dot (EccoAPI background generation) */}
+                          {(() => {
+                            const st = getBatchJobStatus(b.id);
+                            if (!st) return null;
+                            const dotColor = st === 'polling' ? '#F59E0B' : st === 'error' ? '#F43F5E' : '#10B981';
+                            return (
+                              <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, boxShadow: `0 0 4px ${dotColor}`, flexShrink: 0, animation: st === 'polling' ? 'pulse 1s infinite' : 'none' }} title={st === 'polling' ? 'Generating…' : st === 'error' ? 'Error' : 'Done'} />
+                            );
+                          })()}
                           <span style={{ flex: 1, fontSize: 11, color: b.id === activeBatchId ? '#F1F0F5' : '#9090A8', fontWeight: b.id === activeBatchId ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
                           <button onClick={e => { e.stopPropagation(); setRenamingId(b.id); setRenameVal(b.name); }} style={{ background: 'none', border: 'none', color: '#55556A', cursor: 'pointer', padding: '0 2px', fontSize: 11 }} title="Rename">✎</button>
                           {batches.length > 1 && (
@@ -794,7 +992,7 @@ function StudioCanvas() {
             })()}
 
             {/* ── Node settings (only when no asset/library item is selected) ── */}
-            {!selectedAssetId && !selectedLibImgId && !selectedNodeId && <GlobalSettings />}
+            {!selectedAssetId && !selectedLibImgId && !selectedNodeId && <GlobalSettings activeProvider={activeProvider} />}
 
             {!selectedAssetId && !selectedLibImgId && selectedNodeType === 'uploadNode' && (
               <>
@@ -836,10 +1034,27 @@ function StudioCanvas() {
                     placeholder="blur, noise, artifacts, low quality…"
                     style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
                 </Sec>
-                <Sec label="Model">
-                  <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
-                </Sec>
+                {activeProvider === 'ecco' ? (
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['NanoBanana 3.1', 'NanaBanana Pro']} value={settingsOf.eccoModel === 'nanobananapro' ? 'NanaBanana Pro' : 'NanoBanana 3.1'} onChange={v => setSetting('eccoModel', v === 'NanaBanana Pro' ? 'nanobananapro' : 'nanobanana31')} cols={2} />
+                    </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                    </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                  </>
+                ) : (
+                  <Sec label="Model">
+                    <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
+                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                  </Sec>
+                )}
                 <Sec label="Generation Count">
                   <Chips opts={['1', '2', '3', '4']} value={String(settingsOf.count ?? 1)} onChange={v => setSetting('count', Number(v))} cols={4} />
                   <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Creates extra output nodes as needed</p>
@@ -898,10 +1113,27 @@ function StudioCanvas() {
                       placeholder="blur, noise, artifacts…"
                       style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
                   </Sec>
-                  <Sec label="Model">
-                    <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
-                  </Sec>
+                  {activeProvider === 'ecco' ? (
+                    <>
+                      <Sec label="Model">
+                        <Chips opts={['NanoBanana 3.1', 'NanaBanana Pro']} value={settingsOf.eccoModel === 'nanobananapro' ? 'NanaBanana Pro' : 'NanoBanana 3.1'} onChange={v => setSetting('eccoModel', v === 'NanaBanana Pro' ? 'nanobananapro' : 'nanobanana31')} cols={2} />
+                      </Sec>
+                      <Sec label="Image Size">
+                        <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                      </Sec>
+                      <Sec label="Google Search Grounding">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        </label>
+                      </Sec>
+                    </>
+                  ) : (
+                    <Sec label="Model">
+                      <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                    </Sec>
+                  )}
                 </>
               );
             })()}
@@ -938,6 +1170,22 @@ function StudioCanvas() {
                 <Sec label="Output">
                   <p style={{ fontSize: 10, color: '#55556A', lineHeight: 1.6 }}>Always outputs a single 16:9 composite image with 4 panels: front, 3/4 angle, side profile, and rear view of the model.</p>
                 </Sec>
+                {activeProvider === 'ecco' && (
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['NanoBanana 3.1', 'NanaBanana Pro']} value={settingsOf.eccoModel === 'nanobananapro' ? 'NanaBanana Pro' : 'NanoBanana 3.1'} onChange={v => setSetting('eccoModel', v === 'NanaBanana Pro' ? 'nanobananapro' : 'nanobanana31')} cols={2} />
+                    </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                    </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                  </>
+                )}
                 <Sec label="Style">
                   <Chips opts={['Realistic', 'Editorial', 'Commercial', 'Artistic']} value={settingsOf.style ?? 'Realistic'} onChange={v => setSetting('style', v)} cols={2} />
                 </Sec>
@@ -1004,7 +1252,7 @@ function StudioCanvas() {
 }
 
 // ─── Global (no selection) settings panel ────────────────────────────────────
-function GlobalSettings() {
+function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' }) {
   return (
     <>
       <SideLabel>Global Defaults</SideLabel>
@@ -1019,9 +1267,13 @@ function GlobalSettings() {
           <li>View the result in the connected <strong style={{ color: '#F1F0F5' }}>Image Output</strong> node</li>
         </ol>
       </Sec>
-      <Sec label="Model">
-        <p style={{ fontSize: 11, color: '#0D9488' }}>Gemini 3.1 Flash Image</p>
-        <p style={{ fontSize: 9, color: '#55556A', marginTop: 3 }}>Configured in GEMINI_API_KEY env var</p>
+      <Sec label="Provider">
+        <p style={{ fontSize: 11, color: '#0D9488' }}>
+          {activeProvider === 'ecco' ? 'EccoAPI (Nano Banana)' : 'Google Gemini'}
+        </p>
+        <p style={{ fontSize: 9, color: '#55556A', marginTop: 3 }}>
+          {activeProvider === 'ecco' ? 'nk_live_... key configured' : 'GEMINI_API_KEY configured'}
+        </p>
       </Sec>
       <Sec label="Keyboard Shortcuts">
         {[
