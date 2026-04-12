@@ -96,10 +96,10 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
     setIsSaving(true);
     try {
       const result = await uploadReferenceImage(file, name.trim(), parsedTags);
-      if (!result.success) throw new Error('Upload failed');
+      if (!result.success) throw new Error(result.error ?? 'Upload failed');
       onSaveImage(id, { id: result.id!, name: result.name!, url: result.url!, tags: result.tags! });
-    } catch {
-      setError('Upload failed. Check the dev server console for details.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed. Check the dev server console for details.');
     } finally {
       setIsSaving(false);
     }

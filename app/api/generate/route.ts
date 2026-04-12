@@ -20,6 +20,40 @@ function resolveModel(label?: string): string {
   return MODEL_MAP[label] ?? label;
 }
 
+// ─── 503 retry with Pro fallback ─────────────────────────────────────────────
+
+function is503Error(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  return (
+    lower.includes('503') ||
+    lower.includes('overloaded') ||
+    lower.includes('service unavailable') ||
+    lower.includes('unavailable') ||
+    (typeof err === 'object' && err !== null &&
+      ((err as Record<string, unknown>).status === 503 ||
+       (err as Record<string, unknown>).statusCode === 503))
+  );
+}
+
+async function generateWithFallback(
+  ai: GoogleGenAI,
+  params: Parameters<typeof ai.models.generateContent>[0],
+): Promise<GenerateContentResponse> {
+  try {
+    return await ai.models.generateContent(params);
+  } catch (err) {
+    if (!is503Error(err)) throw err;
+
+    const proModel = MODEL_MAP['Pro'];
+    if (params.model === proModel) throw err; // already on Pro, cannot fall back further
+
+    console.warn(`[generate] 503 on model=${params.model as string} — retrying with Pro model (${proModel})…`);
+    await new Promise(r => setTimeout(r, 1500));
+    return await ai.models.generateContent({ ...params, model: proModel });
+  }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function getAI(): GoogleGenAI {
@@ -155,7 +189,7 @@ export async function POST(request: NextRequest) {
       const textPrompt = buildModelPrompt(prompt, settings);
       const contents: Content[] = [{ role: 'user', parts: [{ text: textPrompt }] }];
 
-      const response = await ai.models.generateContent({
+      const response = await generateWithFallback(ai, {
         model,
         contents,
         config: {
@@ -192,7 +226,7 @@ export async function POST(request: NextRequest) {
 
     const contents: Content[] = [{ role: 'user', parts }];
 
-    const response = await ai.models.generateContent({
+    const response = await generateWithFallback(ai, {
       model,
       contents,
       config: {

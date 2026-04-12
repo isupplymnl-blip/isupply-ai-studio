@@ -16,6 +16,7 @@ export async function uploadReferenceImage(file: File, name: string, tags: strin
     return { success: true, id: data.id, name: data.name, url: data.url, tags: data.tags };
   } catch (err) {
     console.error('[uploadAsset]', err);
-    return { success: false };
+    const message = err instanceof Error ? err.message : 'Upload failed';
+    return { success: false, error: message };
   }
 }
