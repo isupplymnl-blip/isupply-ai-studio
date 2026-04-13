@@ -201,7 +201,13 @@ export async function POST(request: NextRequest) {
     const ai    = getAI();
     const model = resolveModel(settings.model as string | undefined);
 
-    console.log(`[generate] model=${model} type=${type ?? 'slide'} nodeId=${nodeId}`);
+    const useGoogleSearch = Boolean(settings.useGoogleSearch);
+    const useImageSearch  = Boolean(settings.useImageSearch);
+    const searchTools = useGoogleSearch
+      ? [{ googleSearch: useImageSearch ? { searchTypes: { imageSearch: {} } } : {} }]
+      : undefined;
+
+    console.log(`[generate] model=${model} type=${type ?? 'slide'} nodeId=${nodeId} search=${useGoogleSearch} imageSearch=${useImageSearch}`);
 
     // ── Model Creation path (text-only → 16:9 four-panel composite) ───────────
     if (type === 'model-creation') {
@@ -218,6 +224,7 @@ export async function POST(request: NextRequest) {
         thinkingConfig: { includeThoughts },
         imageConfig: { aspectRatio: '16:9', imageSize: '1K', mediaResolution: 'media_resolution_high' },
         safetySettings: buildSafetySettings(safetyThresh),
+        ...(searchTools ? { tools: searchTools } : {}),
       };
 
       console.log(`[generate] ── REQUEST TO GOOGLE GEMINI API ──`);
@@ -308,6 +315,7 @@ export async function POST(request: NextRequest) {
       thinkingConfig: { includeThoughts },
       imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
       safetySettings: buildSafetySettings(safetyThresh),
+      ...(searchTools ? { tools: searchTools } : {}),
     };
 
     const refSummary = parts

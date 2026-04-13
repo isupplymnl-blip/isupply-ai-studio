@@ -26,6 +26,7 @@ export interface NodeSettings {
   eccoModel?: 'nanobanana31' | 'nanobananapro';
   imageSize?: '1K' | '2K' | '4K';
   useGoogleSearch?: boolean;
+  useImageSearch?: boolean;   // default false — image results from Google Search (Flash Image model only)
   useAsync?: boolean;         // default false (sync mode)
   useStreaming?: boolean;     // default false — SSE streaming to bypass 524 timeout
   // Image Output

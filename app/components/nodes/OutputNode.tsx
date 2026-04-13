@@ -28,6 +28,8 @@ export default function OutputNode({ id, data }: NodeProps<OutputNodeData>) {
     if (data.lastPrompt) onRegenerate(id, data.lastPrompt, data.settings);
   }, [id, data.lastPrompt, data.settings, onRegenerate]);
 
+  const canRegen = Boolean(data.lastPrompt) && !data.isLoading;
+
   const handleDownload = useCallback(() => {
     if (!data.imageUrl) return;
     const a = document.createElement('a');
@@ -149,8 +151,8 @@ export default function OutputNode({ id, data }: NodeProps<OutputNodeData>) {
 
       {/* Action buttons */}
       <div style={{ display: 'flex', gap: 5 }}>
-        <button onClick={e => { e.stopPropagation(); handleRegenerate(); }} disabled={!data.lastPrompt || data.isLoading}
-          style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: '1px solid #2A2A35', background: '#111113', color: !data.lastPrompt || data.isLoading ? '#55556A' : '#9090A8', cursor: !data.lastPrompt || data.isLoading ? 'not-allowed' : 'pointer' }}>
+        <button onClick={e => { e.stopPropagation(); handleRegenerate(); }} disabled={!canRegen}
+          style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: `1px solid ${data.error && canRegen ? '#F43F5E44' : '#2A2A35'}`, background: '#111113', color: !canRegen ? '#55556A' : data.error ? '#F43F5E' : '#9090A8', cursor: !canRegen ? 'not-allowed' : 'pointer' }}>
           ↻ Regen
         </button>
         <button onClick={e => { e.stopPropagation(); handleDownload(); }} disabled={!data.imageUrl}

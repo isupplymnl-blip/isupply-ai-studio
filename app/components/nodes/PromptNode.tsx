@@ -192,12 +192,41 @@ export default function PromptNode({ id, data }: NodeProps<PromptNodeData>) {
             })}
           </div>
           {/* Search grounding */}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
             <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
               onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
               style={{ accentColor: '#7C3AED' }} />
             <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
           </label>
+          {data.settings?.useGoogleSearch && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
+                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
+                style={{ accentColor: '#7C3AED' }} />
+              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
+            </label>
+          )}
+        </div>
+      )}
+
+      {/* Google Search grounding for Gemini / Pudding */}
+      {(activeProvider === 'gemini' || activeProvider === 'pudding') && (
+        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
+          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Search Grounding</p>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
+            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
+              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
+              style={{ accentColor: '#7C3AED' }} />
+            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
+          </label>
+          {data.settings?.useGoogleSearch && (
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
+              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
+                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
+                style={{ accentColor: '#7C3AED' }} />
+              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
+            </label>
+          )}
         </div>
       )}
 

@@ -403,30 +403,39 @@ function StudioCanvas() {
     setNodes(nds => nds.map(n =>
       outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
     ));
-    try {
-      const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await res.json() as { imageUrl?: string; error?: string };
-      if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-      const promptText = body.prompt as string;
-      const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
-      setNodes(nds => nds.map(n => {
-        if (outputNodeIds.includes(n.id))
-          return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
-        // Save prompt history on the originating prompt node
-        if (body.type === 'slide' && n.id === body.nodeId) {
-          type H = { prompt: string; ts: string };
-          const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
-          return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
-        }
-        return n;
-      }));
-      addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Generation failed';
-      setNodes(nds => nds.map(n =>
-        outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
-      ));
+    const promptText = body.prompt as string;
+    const origSettings = (body.settings ?? {}) as Record<string, unknown>;
+    const hadSearch = Boolean(origSettings.useGoogleSearch) || Boolean(origSettings.useImageSearch);
+    const attempts: Record<string, unknown>[] = hadSearch
+      ? [body, { ...body, settings: { ...origSettings, useGoogleSearch: false, useImageSearch: false } }]
+      : [body];
+
+    let lastError = '';
+    for (const attempt of attempts) {
+      try {
+        const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
+        const data = await res.json() as { imageUrl?: string; error?: string };
+        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
+        const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+        setNodes(nds => nds.map(n => {
+          if (outputNodeIds.includes(n.id))
+            return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+          if (body.type === 'slide' && n.id === body.nodeId) {
+            type H = { prompt: string; ts: string };
+            const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+            return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+          }
+          return n;
+        }));
+        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Generation failed';
+      }
     }
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
+    ));
   }, [addGeneratedImage]);
 
   const callPuddingGenerate = useCallback(async (
@@ -436,29 +445,39 @@ function StudioCanvas() {
     setNodes(nds => nds.map(n =>
       outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
     ));
-    try {
-      const res  = await fetch('/api/pudding/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      const data = await res.json() as { imageUrl?: string; error?: string };
-      if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-      const promptText = body.prompt as string;
-      const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
-      setNodes(nds => nds.map(n => {
-        if (outputNodeIds.includes(n.id))
-          return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
-        if (body.type === 'slide' && n.id === body.nodeId) {
-          type H = { prompt: string; ts: string };
-          const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
-          return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
-        }
-        return n;
-      }));
-      addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Generation failed';
-      setNodes(nds => nds.map(n =>
-        outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
-      ));
+    const promptText = body.prompt as string;
+    const origSettings = (body.settings ?? {}) as Record<string, unknown>;
+    const hadSearch = Boolean(origSettings.useGoogleSearch) || Boolean(origSettings.useImageSearch);
+    const attempts: Record<string, unknown>[] = hadSearch
+      ? [body, { ...body, settings: { ...origSettings, useGoogleSearch: false, useImageSearch: false } }]
+      : [body];
+
+    let lastError = '';
+    for (const attempt of attempts) {
+      try {
+        const res  = await fetch('/api/pudding/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
+        const data = await res.json() as { imageUrl?: string; error?: string };
+        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
+        const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+        setNodes(nds => nds.map(n => {
+          if (outputNodeIds.includes(n.id))
+            return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+          if (body.type === 'slide' && n.id === body.nodeId) {
+            type H = { prompt: string; ts: string };
+            const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+            return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+          }
+          return n;
+        }));
+        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+        return;
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Generation failed';
+      }
     }
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
+    ));
   }, [addGeneratedImage]);
 
   const callPuddingGenerateStream = useCallback(async (
@@ -469,66 +488,78 @@ function StudioCanvas() {
       outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
     ));
     const promptText = body.prompt as string;
-    try {
-      const res = await fetch('/api/pudding/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, useStreaming: true }),
-      });
-      if (!res.ok || !res.body) throw new Error(`Streaming request failed: ${res.status}`);
+    const origSettings = (body.settings ?? {}) as Record<string, unknown>;
+    const hadSearch = Boolean(origSettings.useGoogleSearch) || Boolean(origSettings.useImageSearch);
+    const attempts: Record<string, unknown>[] = hadSearch
+      ? [body, { ...body, settings: { ...origSettings, useGoogleSearch: false, useImageSearch: false } }]
+      : [body];
 
-      const reader  = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer    = '';
+    let lastError = '';
 
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
+    for (const attempt of attempts) {
+      try {
+        const res = await fetch('/api/pudding/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...attempt, useStreaming: true }),
+        });
+        if (!res.ok || !res.body) throw new Error(`Streaming request failed: ${res.status}`);
 
-        // SSE events are separated by \n\n
-        const events = buffer.split('\n\n');
-        buffer = events.pop() ?? '';
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer    = '';
 
-        for (const block of events) {
-          if (!block.trim()) continue;
-          let eventType = 'message';
-          let eventData = '';
-          for (const line of block.split('\n')) {
-            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
-            if (line.startsWith('data: '))  eventData = line.slice(6).trim();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE events are separated by \n\n
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+
+          for (const block of events) {
+            if (!block.trim()) continue;
+            let eventType = 'message';
+            let eventData = '';
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+              if (line.startsWith('data: '))  eventData = line.slice(6).trim();
+            }
+            if (!eventData) continue;
+
+            const parsed = JSON.parse(eventData) as { imageUrl?: string; error?: string };
+
+            if (eventType === 'complete' && parsed.imageUrl) {
+              const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+              setNodes(nds => nds.map(n => {
+                if (outputNodeIds.includes(n.id))
+                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
+                if (attempt.type === 'slide' && n.id === attempt.nodeId) {
+                  type H = { prompt: string; ts: string };
+                  const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+                  return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+                }
+                return n;
+              }));
+              addGeneratedImage({ id: `img-${Date.now()}`, url: parsed.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+              return; // success — exit the function entirely
+            }
+            if (eventType === 'error') {
+              throw new Error(parsed.error ?? 'Streaming generation failed');
+            }
+            // heartbeat — ignore, just keeps the connection alive
           }
-          if (!eventData) continue;
-
-          const parsed = JSON.parse(eventData) as { imageUrl?: string; error?: string };
-
-          if (eventType === 'complete' && parsed.imageUrl) {
-            const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
-            setNodes(nds => nds.map(n => {
-              if (outputNodeIds.includes(n.id))
-                return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
-              if (body.type === 'slide' && n.id === body.nodeId) {
-                type H = { prompt: string; ts: string };
-                const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
-                return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
-              }
-              return n;
-            }));
-            addGeneratedImage({ id: `img-${Date.now()}`, url: parsed.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
-            break outer;
-          }
-          if (eventType === 'error') {
-            throw new Error(parsed.error ?? 'Streaming generation failed');
-          }
-          // heartbeat — ignore, just keeps the connection alive
         }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Generation failed';
       }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Generation failed';
-      setNodes(nds => nds.map(n =>
-        outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
-      ));
     }
+
+    // All attempts exhausted
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
+    ));
   }, [addGeneratedImage]);
 
   /** Collect URLs of UploadNodes connected as inputs to a given node */
@@ -1292,12 +1323,44 @@ function StudioCanvas() {
                       </label>
                       <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                     </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                    {settingsOf.useGoogleSearch && (
+                      <Sec label="Image Search">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                      </Sec>
+                    )}
                   </>
                 ) : (
-                  <Sec label="Model">
-                    <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
-                  </Sec>
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                    </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                    {settingsOf.useGoogleSearch && (
+                      <Sec label="Image Search">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                      </Sec>
+                    )}
+                  </>
                 )}
                 <Sec label="Generation Count">
                   <Chips opts={['1', '2', '3', '4']} value={String(settingsOf.count ?? 1)} onChange={v => setSetting('count', Number(v))} cols={4} />
@@ -1421,12 +1484,44 @@ function StudioCanvas() {
                         </label>
                         <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                       </Sec>
+                      <Sec label="Google Search Grounding">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        </label>
+                      </Sec>
+                      {settingsOf.useGoogleSearch && (
+                        <Sec label="Image Search">
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                            <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                          </label>
+                          <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                        </Sec>
+                      )}
                     </>
                   ) : (
-                    <Sec label="Model">
-                      <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
-                    </Sec>
+                    <>
+                      <Sec label="Model">
+                        <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                      </Sec>
+                      <Sec label="Google Search Grounding">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        </label>
+                      </Sec>
+                      {settingsOf.useGoogleSearch && (
+                        <Sec label="Image Search">
+                          <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                            <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                          </label>
+                          <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                        </Sec>
+                      )}
+                    </>
                   )}
                 </>
               );
@@ -1535,6 +1630,21 @@ function StudioCanvas() {
                       </label>
                       <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                     </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                    {settingsOf.useGoogleSearch && (
+                      <Sec label="Image Search">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                      </Sec>
+                    )}
                   </>
                 ) : null}
                 <Sec label="Style">

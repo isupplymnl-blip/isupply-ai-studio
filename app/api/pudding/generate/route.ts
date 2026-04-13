@@ -249,7 +249,13 @@ export async function POST(request: NextRequest) {
       settings.imageSize as string | undefined,
     );
 
-    console.log(`[pudding] model=${model} type=${type ?? 'slide'} nodeId=${nodeId}`);
+    const useGoogleSearch = Boolean(settings.useGoogleSearch);
+    const useImageSearch  = Boolean(settings.useImageSearch);
+    const searchTools = useGoogleSearch
+      ? [{ googleSearch: useImageSearch ? { searchTypes: { imageSearch: {} } } : {} }]
+      : undefined;
+
+    console.log(`[pudding] model=${model} type=${type ?? 'slide'} nodeId=${nodeId} search=${useGoogleSearch} imageSearch=${useImageSearch}`);
 
     // ── Model Creation path ──────────────────────────────────────────────────
     if (type === 'model-creation') {
@@ -266,6 +272,7 @@ export async function POST(request: NextRequest) {
         thinkingConfig: { includeThoughts },
         imageConfig: { aspectRatio: '16:9', imageSize: '1K', mediaResolution: 'media_resolution_high' },
         safetySettings: buildSafetySettings(safetyThresh),
+        ...(searchTools ? { tools: searchTools } : {}),
       };
 
       console.log(`[pudding] ── REQUEST TO PUDDINGAPI (model-creation${useStreaming ? ', streaming' : ''}) ──`);
@@ -351,6 +358,7 @@ export async function POST(request: NextRequest) {
           thinkingConfig: { includeThoughts },
           imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
           safetySettings: buildSafetySettings(safetyThresh),
+          ...(searchTools ? { tools: searchTools } : {}),
         };
 
         const parts = (contents[0] as { role: string; parts: Part[] }).parts;
@@ -390,6 +398,7 @@ export async function POST(request: NextRequest) {
       thinkingConfig: { includeThoughts },
       imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
       safetySettings: buildSafetySettings(safetyThresh),
+      ...(searchTools ? { tools: searchTools } : {}),
     };
 
     const parts = (contents[0] as { role: string; parts: Part[] }).parts;
