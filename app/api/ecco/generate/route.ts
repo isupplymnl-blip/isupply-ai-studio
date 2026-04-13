@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
 import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../../lib/storage';
+import { findMatchingImages } from '../../../../lib/tagMatcher';
 import { jobStore } from '../../../lib/eccoJobStore';
 
 // Force Node.js runtime (not Edge) so background tasks and fs work
@@ -26,14 +27,25 @@ function getEccoKey(): string {
   return key;
 }
 
-async function urlToBase64(urlOrPath: string): Promise<string> {
+function mimeFromPath(p: string): string {
+  const ext = p.split('.').pop()?.toLowerCase() ?? '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'webp') return 'image/webp';
+  if (ext === 'gif')  return 'image/gif';
+  return 'image/png';
+}
+
+async function urlToEccoImage(urlOrPath: string): Promise<{ data: string; mimeType: string }> {
   if (urlOrPath.startsWith('/')) {
-    const buf = await readFile(urlToFilePath(urlOrPath));
-    return buf.toString('base64');
+    const filePath = urlToFilePath(urlOrPath);
+    const buf  = await readFile(filePath);
+    return { data: buf.toString('base64'), mimeType: mimeFromPath(filePath) };
   }
   const res = await fetch(urlOrPath);
   if (!res.ok) throw new Error(`Failed to fetch reference: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer()).toString('base64');
+  const mimeType = res.headers.get('content-type')?.split(';')[0] ?? 'image/png';
+  const data = Buffer.from(await res.arrayBuffer()).toString('base64');
+  return { data, mimeType };
 }
 
 async function downloadAndPersist(assetUrl: string): Promise<string> {
@@ -70,6 +82,7 @@ async function runEccoGeneration(
     };
 
     if (!res.ok) {
+      console.error(`[ecco/generate] job=${jobId} ECCO ${res.status} body:`, JSON.stringify(data));
       const msg = ECCO_ERRORS[res.status] ?? `EccoAPI error ${res.status}`;
       jobStore.set(jobId, { status: 'error', error: msg });
       return;
@@ -130,11 +143,19 @@ export async function POST(request: NextRequest) {
 
     const apiKey = getEccoKey();
 
-    // Convert local reference URLs to base64 (EccoAPI can't reach localhost)
-    const imageBase64: string[] = [];
-    for (const url of referenceUrls.slice(0, 14)) {
+    // Tag-match saved assets (same logic as Gemini route)
+    const matchedImages = await findMatchingImages(prompt.trim());
+    // Merge explicit canvas-connected refs with tag-matched ones (deduplicated)
+    const explicitRefs = referenceUrls.filter(url => !matchedImages.find(m => m.url === url));
+    const allRefUrls = [...explicitRefs, ...matchedImages.map(m => m.url)].slice(0, 14);
+
+    console.log(`[ecco/generate] references: ${allRefUrls.length} (${explicitRefs.length} explicit + ${matchedImages.length} tag-matched)`);
+
+    // Convert all reference URLs to {data, mimeType} objects (EccoAPI can't reach localhost)
+    const imageBase64: { data: string; mimeType: string }[] = [];
+    for (const url of allRefUrls) {
       try {
-        imageBase64.push(await urlToBase64(url));
+        imageBase64.push(await urlToEccoImage(url));
       } catch (e) {
         console.warn('[ecco/generate] skipping inaccessible reference:', url, e);
       }

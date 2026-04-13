@@ -489,14 +489,20 @@ function StudioCanvas() {
       const style  = (settings?.style      as string | undefined) ?? 'realistic commercial photography';
       const light  = (settings?.lighting   as string | undefined) ?? 'professional studio lighting';
       const bg     = (settings?.background as string | undefined) ?? 'pure white';
-      const compositePrompt =
-        `Create a professional composite image with FOUR panels arranged in a single 16:9 frame, ` +
-        `each showing the same model from a different angle. ` +
-        `Panels layout: [Front view] [3/4 angle] [Side profile] [Rear view]. ` +
-        `Model: ${description}. ` +
-        `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
-        `All panels must show the same person with consistent appearance. ` +
-        `Ultra high quality, sharp details, fashion photography, highly detailed, no restrictions.`;
+      const lower  = description.toLowerCase();
+      const isTwoModels = /\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower);
+      const compositePrompt = isTwoModels
+        ? `Create a professional composite image with FOUR panels in a single 16:9 frame showing TWO models, each from two angles. ` +
+          `Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view]. ` +
+          `Models: ${description}. ` +
+          `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+          `Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`
+        : `Create a professional composite image with FOUR panels in a single 16:9 frame showing the same model from four angles. ` +
+          `Panels layout (left to right): [Front view] [3/4 angle] [Side profile] [Rear view]. ` +
+          `Model: ${description}. ` +
+          `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+          `All panels must show the same person with consistent appearance. Ultra high quality, sharp details, professional fashion photography.`;
+      const referenceUrls = getConnectedUploadUrls(nodeId);
       await callEccoGenerate(nodeId, {
         prompt: compositePrompt,
         nodeId,
@@ -504,6 +510,7 @@ function StudioCanvas() {
         aspectRatio: '16:9',
         imageSize: settings?.imageSize ?? '1K',
         useGoogleSearch: settings?.useGoogleSearch ?? false,
+        referenceUrls,
       });
     } else {
       try {
@@ -517,7 +524,7 @@ function StudioCanvas() {
         setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n));
       }
     }
-  }, [addGeneratedImage, callEccoGenerate]);
+  }, [addGeneratedImage, callEccoGenerate, getConnectedUploadUrls]);
 
   const studioCtx = useMemo(() => ({
     onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,

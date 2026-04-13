@@ -285,13 +285,25 @@ function buildSlidePrompt(
   return `${refDesc}${prompt}. ${ratioHint}${neg ? ` AVOID: ${neg}.` : ''} Photorealistic, ultra high quality, professional product photography.`;
 }
 
+function detectModelCount(description: string): 1 | 2 {
+  const lower = description.toLowerCase();
+  return /\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower) ? 2 : 1;
+}
+
 function buildModelPrompt(description: string, settings: Record<string, unknown>): string {
   const style  = (settings.style      as string | undefined) ?? 'realistic commercial photography';
   const light  = (settings.lighting   as string | undefined) ?? 'professional studio lighting';
   const bg     = (settings.background as string | undefined) ?? 'pure white';
-  return `Create a professional composite image with FOUR panels in a single 16:9 frame showing the same model from different angles.
-Panels layout: [Front view] [3/4 angle] [Side profile] [Rear view].
+  if (detectModelCount(description) === 2) {
+    return `Create a professional composite image with FOUR panels in a single 16:9 frame showing TWO models, each from two angles.
+Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view].
+Models: ${description}.
+Style: ${style}. Lighting: ${light}. Background: ${bg}.
+Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`;
+  }
+  return `Create a professional composite image with FOUR panels in a single 16:9 frame showing the same model from four angles.
+Panels layout (left to right): [Front view] [3/4 angle] [Side profile] [Rear view].
 Model: ${description}.
 Style: ${style}. Lighting: ${light}. Background: ${bg}.
-All panels must show the same person with consistent appearance. Ultra high quality, sharp details, fashion photography.`;
+All panels must show the same person with consistent appearance. Ultra high quality, sharp details, professional fashion photography.`;
 }

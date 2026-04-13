@@ -118,7 +118,11 @@ export default function ModelCreationNode({ id, data }: NodeProps<ModelCreationD
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
             <span style={{ fontSize: 24, opacity: 0.25 }}>👤</span>
             <p style={{ color: '#55556A', fontSize: 11 }}>16:9 composite appears here</p>
-            <p style={{ color: '#55556A', fontSize: 10 }}>Front · 3/4 · Side · Back</p>
+            <p style={{ color: '#55556A', fontSize: 10 }}>
+              {/\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy))\b/i.test(description)
+                ? 'M1 Front · M1 Back · M2 Front · M2 Back'
+                : 'Front · 3/4 · Side · Back'}
+            </p>
           </div>
         )}
       </div>
