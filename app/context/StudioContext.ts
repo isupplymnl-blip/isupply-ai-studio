@@ -27,6 +27,7 @@ export interface NodeSettings {
   imageSize?: '1K' | '2K' | '4K';
   useGoogleSearch?: boolean;
   useAsync?: boolean;         // default false (sync mode)
+  useStreaming?: boolean;     // default false — SSE streaming to bypass 524 timeout
   // Image Output
   resolution?: string;
   aspectRatio?: string;
@@ -60,7 +61,7 @@ export interface StudioContextType {
   onStartConnect:      (nodeId: string) => void;
   onCompleteConnect:   (targetNodeId: string) => void;
   // Provider
-  activeProvider:      'gemini' | 'ecco';
+  activeProvider:      'gemini' | 'ecco' | 'pudding';
 }
 
 export const StudioContext = createContext<StudioContextType>({

@@ -68,9 +68,9 @@ function StudioCanvas() {
   }, [nodes, edges, saveCurrentBatch]);
 
   // ── Provider & credits state ──────────────────────────────────────────────
-  const [activeProvider, setActiveProvider] = useState<'gemini' | 'ecco'>('gemini');
+  const [activeProvider, setActiveProvider] = useState<'gemini' | 'ecco' | 'pudding'>('gemini');
   const [eccoCredits, setEccoCredits] = useState<number | null>(null);
-  const activeProviderRef = useRef<'gemini' | 'ecco'>('gemini');
+  const activeProviderRef = useRef<'gemini' | 'ecco' | 'pudding'>('gemini');
   activeProviderRef.current = activeProvider;
   const activeBatchIdRef = useRef(activeBatchId);
   activeBatchIdRef.current = activeBatchId;
@@ -79,7 +79,7 @@ function StudioCanvas() {
 
   useEffect(() => {
     // localStorage override takes priority over server env var
-    const saved = localStorage.getItem('isupply-provider') as 'gemini' | 'ecco' | null;
+    const saved = localStorage.getItem('isupply-provider') as 'gemini' | 'ecco' | 'pudding' | null;
     if (saved) {
       setActiveProvider(saved);
     } else {
@@ -93,7 +93,8 @@ function StudioCanvas() {
   }, []);
 
   const toggleProvider = useCallback(() => {
-    const next = activeProvider === 'gemini' ? 'ecco' : 'gemini';
+    const cycle: Array<'gemini' | 'ecco' | 'pudding'> = ['gemini', 'ecco', 'pudding'];
+    const next = cycle[(cycle.indexOf(activeProvider) + 1) % cycle.length];
     setActiveProvider(next);
     localStorage.setItem('isupply-provider', next);
   }, [activeProvider]);
@@ -428,6 +429,108 @@ function StudioCanvas() {
     }
   }, [addGeneratedImage]);
 
+  const callPuddingGenerate = useCallback(async (
+    outputNodeIds: string[],
+    body: Record<string, unknown>,
+  ) => {
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
+    ));
+    try {
+      const res  = await fetch('/api/pudding/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const data = await res.json() as { imageUrl?: string; error?: string };
+      if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
+      const promptText = body.prompt as string;
+      const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+      setNodes(nds => nds.map(n => {
+        if (outputNodeIds.includes(n.id))
+          return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+        if (body.type === 'slide' && n.id === body.nodeId) {
+          type H = { prompt: string; ts: string };
+          const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+          return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+        }
+        return n;
+      }));
+      addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Generation failed';
+      setNodes(nds => nds.map(n =>
+        outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
+      ));
+    }
+  }, [addGeneratedImage]);
+
+  const callPuddingGenerateStream = useCallback(async (
+    outputNodeIds: string[],
+    body: Record<string, unknown>,
+  ) => {
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
+    ));
+    const promptText = body.prompt as string;
+    try {
+      const res = await fetch('/api/pudding/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, useStreaming: true }),
+      });
+      if (!res.ok || !res.body) throw new Error(`Streaming request failed: ${res.status}`);
+
+      const reader  = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer    = '';
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by \n\n
+        const events = buffer.split('\n\n');
+        buffer = events.pop() ?? '';
+
+        for (const block of events) {
+          if (!block.trim()) continue;
+          let eventType = 'message';
+          let eventData = '';
+          for (const line of block.split('\n')) {
+            if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+            if (line.startsWith('data: '))  eventData = line.slice(6).trim();
+          }
+          if (!eventData) continue;
+
+          const parsed = JSON.parse(eventData) as { imageUrl?: string; error?: string };
+
+          if (eventType === 'complete' && parsed.imageUrl) {
+            const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+            setNodes(nds => nds.map(n => {
+              if (outputNodeIds.includes(n.id))
+                return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
+              if (body.type === 'slide' && n.id === body.nodeId) {
+                type H = { prompt: string; ts: string };
+                const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+                return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+              }
+              return n;
+            }));
+            addGeneratedImage({ id: `img-${Date.now()}`, url: parsed.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+            break outer;
+          }
+          if (eventType === 'error') {
+            throw new Error(parsed.error ?? 'Streaming generation failed');
+          }
+          // heartbeat — ignore, just keeps the connection alive
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Generation failed';
+      setNodes(nds => nds.map(n =>
+        outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
+      ));
+    }
+  }, [addGeneratedImage]);
+
   /** Collect URLs of UploadNodes connected as inputs to a given node */
   const getConnectedUploadUrls = useCallback((nodeId: string): string[] =>
     edgesRef.current
@@ -481,12 +584,17 @@ function StudioCanvas() {
           referenceUrls,
         })
       ));
+    } else if (activeProviderRef.current === 'pudding') {
+      const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
+      await Promise.all(allOutIds.map(outId =>
+        puddingFn([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
+      ));
     } else {
       await Promise.all(allOutIds.map(outId =>
         callGenerate([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
       ));
     }
-  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   const onRegenerate = useCallback(async (outputNodeId: string, lastPrompt: string, settings?: NodeSettings) => {
     const referenceUrls = getConnectedUploadUrls(outputNodeId);
@@ -504,10 +612,13 @@ function StudioCanvas() {
         useAsync:         settings?.useAsync        ?? false,
         referenceUrls,
       });
+    } else if (activeProviderRef.current === 'pudding') {
+      const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
+      await puddingFn([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
     } else {
       await callGenerate([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
     }
-  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   // Sequential generation for carousel nodes (avoids rate-limit errors)
   const onGenerateCarousel = useCallback(async (nodeId: string, slides: CarouselSlide[], settings?: NodeSettings) => {
@@ -529,11 +640,14 @@ function StudioCanvas() {
           useAsync:         settings?.useAsync        ?? false,
           referenceUrls,
         });
+      } else if (activeProviderRef.current === 'pudding') {
+        const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
+        await puddingFn([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
       } else {
         await callGenerate([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
       }
     }
-  }, [callGenerate, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   const onUpdateData = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes(nds => nds.map(n =>
@@ -575,6 +689,9 @@ function StudioCanvas() {
         useAsync:        settings?.useAsync        ?? false,
         referenceUrls,
       });
+    } else if (activeProviderRef.current === 'pudding') {
+      const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
+      await puddingFn([nodeId], { prompt: description, nodeId, type: 'model-creation', settings });
     } else {
       try {
         const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: description, nodeId, type: 'model-creation', settings }) });
@@ -587,7 +704,7 @@ function StudioCanvas() {
         setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n));
       }
     }
-  }, [addGeneratedImage, callEccoGenerate, getConnectedUploadUrls]);
+  }, [addGeneratedImage, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   const studioCtx = useMemo(() => ({
     onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
@@ -724,21 +841,28 @@ function StudioCanvas() {
               </span>
             )}
             {/* Provider toggle */}
-            <button
-              onClick={toggleProvider}
-              title={`Switch to ${activeProvider === 'gemini' ? 'EccoAPI' : 'Google Gemini'}`}
-              style={{
-                display: 'flex', alignItems: 'center', gap: 5,
-                padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-                border: `1px solid ${activeProvider === 'ecco' ? '#7C3AED44' : '#0D948844'}`,
-                background: activeProvider === 'ecco' ? '#7C3AED11' : '#0D948811',
-                color: activeProvider === 'ecco' ? '#A78BFA' : '#0D9488',
-                cursor: 'pointer',
-              }}
-            >
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: activeProvider === 'ecco' ? '#A78BFA' : '#0D9488', display: 'inline-block' }} />
-              {activeProvider === 'ecco' ? 'EccoAPI' : 'Gemini'}
-            </button>
+            {(() => {
+              const providerColor = activeProvider === 'ecco' ? '#A78BFA' : activeProvider === 'pudding' ? '#FB923C' : '#0D9488';
+              const providerLabel = activeProvider === 'ecco' ? 'EccoAPI' : activeProvider === 'pudding' ? 'Pudding' : 'Gemini';
+              const nextLabel     = activeProvider === 'gemini' ? 'EccoAPI' : activeProvider === 'ecco' ? 'Pudding' : 'Gemini';
+              return (
+                <button
+                  onClick={toggleProvider}
+                  title={`Switch to ${nextLabel}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5,
+                    padding: '3px 10px', borderRadius: 20, fontSize: 10, fontWeight: 600,
+                    border: `1px solid ${providerColor}44`,
+                    background: `${providerColor}11`,
+                    color: providerColor,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: providerColor, display: 'inline-block' }} />
+                  {providerLabel}
+                </button>
+              );
+            })()}
             <span>Active batch:</span>
             <span style={{ color: '#F1F0F5', fontWeight: 600 }}>{activeBatch?.name}</span>
           </div>
@@ -1151,6 +1275,24 @@ function StudioCanvas() {
                       <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                     </Sec>
                   </>
+                ) : activeProvider === 'pudding' ? (
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                    </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                    </Sec>
+                    <Sec label="Streaming Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                      </label>
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                    </Sec>
+                  </>
                 ) : (
                   <Sec label="Model">
                     <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
@@ -1262,6 +1404,24 @@ function StudioCanvas() {
                         <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                       </Sec>
                     </>
+                  ) : activeProvider === 'pudding' ? (
+                    <>
+                      <Sec label="Model">
+                        <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                      </Sec>
+                      <Sec label="Image Size">
+                        <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                      </Sec>
+                      <Sec label="Streaming Mode">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                      </Sec>
+                    </>
                   ) : (
                     <Sec label="Model">
                       <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
@@ -1336,7 +1496,7 @@ function StudioCanvas() {
                   )} cols={3} />
                   <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
                 </Sec>
-                {activeProvider === 'ecco' && (
+                {activeProvider === 'ecco' ? (
                   <>
                     <Sec label="Model">
                       <Chips opts={['NanoBanana 3.1', 'NanaBanana Pro']} value={settingsOf.eccoModel === 'nanobananapro' ? 'NanaBanana Pro' : 'NanoBanana 3.1'} onChange={v => setSetting('eccoModel', v === 'NanaBanana Pro' ? 'nanobananapro' : 'nanobanana31')} cols={2} />
@@ -1358,7 +1518,25 @@ function StudioCanvas() {
                       <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping in async queues</p>
                     </Sec>
                   </>
-                )}
+                ) : activeProvider === 'pudding' ? (
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                    </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                    </Sec>
+                    <Sec label="Streaming Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                      </label>
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                    </Sec>
+                  </>
+                ) : null}
                 <Sec label="Style">
                   <Chips opts={['Realistic', 'Editorial', 'Commercial', 'Artistic']} value={settingsOf.style ?? 'Realistic'} onChange={v => setSetting('style', v)} cols={2} />
                 </Sec>
@@ -1425,7 +1603,7 @@ function StudioCanvas() {
 }
 
 // ─── Global (no selection) settings panel ────────────────────────────────────
-function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' }) {
+function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' | 'pudding' }) {
   return (
     <>
       <SideLabel>Global Defaults</SideLabel>
@@ -1441,11 +1619,11 @@ function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' 
         </ol>
       </Sec>
       <Sec label="Provider">
-        <p style={{ fontSize: 11, color: '#0D9488' }}>
-          {activeProvider === 'ecco' ? 'EccoAPI (Nano Banana)' : 'Google Gemini'}
+        <p style={{ fontSize: 11, color: activeProvider === 'ecco' ? '#A78BFA' : activeProvider === 'pudding' ? '#FB923C' : '#0D9488' }}>
+          {activeProvider === 'ecco' ? 'EccoAPI (Nano Banana)' : activeProvider === 'pudding' ? 'PuddingAPI (Gemini-compatible)' : 'Google Gemini'}
         </p>
         <p style={{ fontSize: 9, color: '#55556A', marginTop: 3 }}>
-          {activeProvider === 'ecco' ? 'nk_live_... key configured' : 'GEMINI_API_KEY configured'}
+          {activeProvider === 'ecco' ? 'nk_live_... key configured' : activeProvider === 'pudding' ? 'PUDDING_API_KEY configured' : 'GEMINI_API_KEY configured'}
         </p>
       </Sec>
       <Sec label="Keyboard Shortcuts">

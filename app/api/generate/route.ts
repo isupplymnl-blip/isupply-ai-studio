@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
+import sharp from 'sharp';
 import { GoogleGenAI, type Part, type Content, type GenerateContentResponse } from '@google/genai';
 import { findMatchingImages } from '../../../lib/tagMatcher';
 import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../lib/storage';
@@ -72,31 +73,33 @@ async function persistImage(base64: string): Promise<string> {
   return makeGeneratedUrl(filename);
 }
 
-/** Read a local URL or remote URL and return a raw base64 string. */
-async function toBase64(urlOrPath: string): Promise<string> {
+/**
+ * Read a local URL or remote URL, resize to max 1024px on the longest side,
+ * and return a JPEG base64 string (quality 85).
+ * Keeps reference images under ~200 KB each without losing detail needed by the model.
+ */
+async function toBase64(urlOrPath: string): Promise<{ data: string; mimeType: 'image/jpeg' }> {
+  let inputBuf: Buffer;
   if (urlOrPath.startsWith('/')) {
-    const buf = await readFile(urlToFilePath(urlOrPath));
-    return buf.toString('base64');
+    inputBuf = await readFile(urlToFilePath(urlOrPath));
+  } else {
+    const res = await fetch(urlOrPath);
+    if (!res.ok) throw new Error(`Failed to fetch reference image: ${res.status} ${urlOrPath}`);
+    inputBuf = Buffer.from(await res.arrayBuffer());
   }
-  const res = await fetch(urlOrPath);
-  if (!res.ok) throw new Error(`Failed to fetch reference image: ${res.status} ${urlOrPath}`);
-  const arrayBuffer = await res.arrayBuffer();
-  return Buffer.from(arrayBuffer).toString('base64');
+
+  const outputBuf = await sharp(inputBuf)
+    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+
+  return { data: outputBuf.toString('base64'), mimeType: 'image/jpeg' };
 }
 
 /** Map resolution label → Gemini imageSize string. */
 function geminiSize(resolution: string): string {
   const map: Record<string, string> = { '4K': '4K', '2K': '2K', '1K': '1K', '512px': '512' };
   return map[resolution] ?? '1K';
-}
-
-/** Derive MIME type from file extension, defaulting to image/jpeg. */
-function mimeFromUrl(url: string): string {
-  const ext = url.split('?')[0].split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'png')  return 'image/png';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif')  return 'image/gif';
-  return 'image/jpeg';
 }
 
 // ─── Safety settings mapper ───────────────────────────────────────────────────
@@ -284,8 +287,7 @@ export async function POST(request: NextRequest) {
     // Parts 2-N: reference images as inlineData (max 14 to stay within token budget)
     for (const img of allImages) {
       try {
-        const data     = await toBase64(img.url);
-        const mimeType = mimeFromUrl(img.url);
+        const { data, mimeType } = await toBase64(img.url);
         parts.push({ inlineData: { mimeType, data } });
       } catch (refErr) {
         console.warn('[generate] skipping inaccessible reference:', img.url,

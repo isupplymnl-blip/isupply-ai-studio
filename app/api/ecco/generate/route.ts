@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
+import sharp from 'sharp';
 import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../../lib/storage';
 import { findMatchingImages } from '../../../../lib/tagMatcher';
 import { jobStore } from '../../../lib/eccoJobStore';
@@ -27,25 +28,27 @@ function getEccoKey(): string {
   return key;
 }
 
-function mimeFromPath(p: string): string {
-  const ext = p.split('.').pop()?.toLowerCase() ?? '';
-  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
-  if (ext === 'webp') return 'image/webp';
-  if (ext === 'gif')  return 'image/gif';
-  return 'image/png';
-}
-
-async function urlToEccoImage(urlOrPath: string): Promise<{ data: string; mimeType: string }> {
+/**
+ * Read a local URL or remote URL, resize to max 1024px on the longest side,
+ * and return a JPEG base64 string (quality 85).
+ * Keeps reference images under ~200 KB each without losing detail needed by the model.
+ */
+async function urlToEccoImage(urlOrPath: string): Promise<{ data: string; mimeType: 'image/jpeg' }> {
+  let inputBuf: Buffer;
   if (urlOrPath.startsWith('/')) {
-    const filePath = urlToFilePath(urlOrPath);
-    const buf  = await readFile(filePath);
-    return { data: buf.toString('base64'), mimeType: mimeFromPath(filePath) };
+    inputBuf = await readFile(urlToFilePath(urlOrPath));
+  } else {
+    const res = await fetch(urlOrPath);
+    if (!res.ok) throw new Error(`Failed to fetch reference: ${res.status}`);
+    inputBuf = Buffer.from(await res.arrayBuffer());
   }
-  const res = await fetch(urlOrPath);
-  if (!res.ok) throw new Error(`Failed to fetch reference: ${res.status}`);
-  const mimeType = res.headers.get('content-type')?.split(';')[0] ?? 'image/png';
-  const data = Buffer.from(await res.arrayBuffer()).toString('base64');
-  return { data, mimeType };
+
+  const outputBuf = await sharp(inputBuf)
+    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+    .jpeg({ quality: 85 })
+    .toBuffer();
+
+  return { data: outputBuf.toString('base64'), mimeType: 'image/jpeg' };
 }
 
 async function downloadAndPersist(assetUrl: string): Promise<string> {
