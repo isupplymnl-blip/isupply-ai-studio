@@ -12,17 +12,21 @@ export interface SavedImage {
 
 export interface NodeSettings {
   // Image Prompt / Carousel
-  temperature?: number;
+  temperature?: number;       // default 1.0
   guidanceScale?: number;
   negativePrompt?: string;
   seed?: string;
-  safetyFilter?: string;
+  safetyFilter?: string;      // legacy — kept for backward compat
+  safetyThreshold?: 'BLOCK_NONE' | 'BLOCK_ONLY_HIGH' | 'BLOCK_MEDIUM_AND_ABOVE' | 'BLOCK_LOW_AND_ABOVE';
+  includeThoughts?: boolean;  // default true
+  mediaResolution?: 'media_resolution_high' | 'media_resolution_medium' | 'media_resolution_low';
   model?: string;
   count?: number;
   // EccoAPI-specific
   eccoModel?: 'nanobanana31' | 'nanobananapro';
   imageSize?: '1K' | '2K' | '4K';
   useGoogleSearch?: boolean;
+  useAsync?: boolean;         // default false (sync mode)
   // Image Output
   resolution?: string;
   aspectRatio?: string;

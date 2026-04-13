@@ -99,6 +99,20 @@ function mimeFromUrl(url: string): string {
   return 'image/jpeg';
 }
 
+// ─── Safety settings mapper ───────────────────────────────────────────────────
+
+type SafetyThreshold = 'BLOCK_NONE' | 'BLOCK_ONLY_HIGH' | 'BLOCK_MEDIUM_AND_ABOVE' | 'BLOCK_LOW_AND_ABOVE';
+
+function buildSafetySettings(threshold: SafetyThreshold) {
+  const categories = [
+    'HARM_CATEGORY_HARASSMENT',
+    'HARM_CATEGORY_HATE_SPEECH',
+    'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+    'HARM_CATEGORY_DANGEROUS_CONTENT',
+  ];
+  return categories.map(category => ({ category, threshold }));
+}
+
 // ─── Fail-safe response parser ────────────────────────────────────────────────
 
 interface ParsedResponse {
@@ -191,14 +205,60 @@ export async function POST(request: NextRequest) {
       const textPrompt = buildModelPrompt(prompt, settings);
       const contents: Content[] = [{ role: 'user', parts: [{ text: textPrompt }] }];
 
+      const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+      const includeThoughts = settings.includeThoughts !== false;
+      const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
+
+      const geminiConfig = {
+        temperature,
+        responseModalities: ['TEXT', 'IMAGE'],
+        thinkingConfig: { includeThoughts },
+        imageConfig: { aspectRatio: '16:9', imageSize: '1K', mediaResolution: 'media_resolution_high' },
+        safetySettings: buildSafetySettings(safetyThresh),
+      };
+
+      console.log(`[generate] ── REQUEST TO GOOGLE GEMINI API ──`);
+      console.log(`[generate] model: ${model}`);
+      console.log(`[generate] config:`, JSON.stringify(geminiConfig, null, 2));
+      console.log(`[generate] parts: [text prompt — ${textPrompt.length} chars, no reference images]`);
+
+      const t0 = Date.now();
       const response = await generateWithFallback(ai, {
         model,
         contents,
-        config: {
-          responseModalities: ['TEXT', 'IMAGE'],
-          imageConfig: { aspectRatio: '16:9', imageSize: '1K' },
-        } as Parameters<typeof ai.models.generateContent>[0]['config'],
+        config: geminiConfig as Parameters<typeof ai.models.generateContent>[0]['config'],
       });
+      const gemini_ms = Date.now() - t0;
+
+      const candidate     = response.candidates?.[0];
+      const responseParts = candidate?.content?.parts ?? [];
+      const imageParts    = responseParts.filter(p => p.inlineData?.mimeType?.startsWith('image/'));
+      const textParts     = responseParts.filter(p => typeof p.text === 'string' && p.text.trim());
+      const usage         = response.usageMetadata ?? {};
+
+      console.log(`[generate] ── RESPONSE FROM GOOGLE GEMINI API (${gemini_ms}ms) ──`);
+      console.log(`[generate] finishReason: ${candidate?.finishReason ?? 'unknown'}`);
+      console.log(`[generate] ── TOKEN USAGE (proves mediaResolution is applied) ──`);
+      console.log(`[generate] usageMetadata:`, JSON.stringify(usage, null, 2));
+      console.log(`[generate] ── THINKING (proves thinkingConfig.includeThoughts worked) ──`);
+      console.log(`[generate] thought parts returned: ${textParts.length}`);
+      if (textParts.length > 0) {
+        textParts.forEach((p, i) => {
+          console.log(`[generate] thought[${i}] (first 300 chars): "${(p.text ?? '').slice(0, 300)}"`);
+        });
+      } else {
+        console.log(`[generate] ⚠ No thought parts — thinkingConfig may not have been applied`);
+      }
+      console.log(`[generate] ── IMAGE OUTPUT ──`);
+      console.log(`[generate] images returned: ${imageParts.length} (${
+        imageParts.map(p => `${p.inlineData?.mimeType}, ${Math.round((p.inlineData?.data?.length ?? 0) * 0.75 / 1024)}KB`).join(', ')
+      })`);
+      console.log(`[generate] ── SAFETY RATINGS (proves safetySettings threshold was applied) ──`);
+      if (candidate?.safetyRatings?.length) {
+        console.log(`[generate] safetyRatings:`, JSON.stringify(candidate.safetyRatings, null, 2));
+      } else {
+        console.log(`[generate] no safetyRatings returned`);
+      }
 
       const { imageData } = parseImageResponse(response);
       const imageUrl = await persistImage(imageData);
@@ -235,14 +295,68 @@ export async function POST(request: NextRequest) {
 
     const contents: Content[] = [{ role: 'user', parts }];
 
+    const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+    const includeThoughts = settings.includeThoughts !== false;
+    const mediaRes        = (settings.mediaResolution as string | undefined) ?? 'media_resolution_high';
+    const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
+
+    const geminiConfig = {
+      temperature,
+      responseModalities: ['TEXT', 'IMAGE'],
+      thinkingConfig: { includeThoughts },
+      imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
+      safetySettings: buildSafetySettings(safetyThresh),
+    };
+
+    const refSummary = parts
+      .map((p, i) => i === 0
+        ? `text(${(p.text ?? '').length} chars)`
+        : `image(${p.inlineData?.mimeType ?? '?'}, ${Math.round(((p.inlineData?.data?.length ?? 0) * 0.75) / 1024)}KB)`
+      ).join(', ');
+
+    console.log(`[generate] ── REQUEST TO GOOGLE GEMINI API ──`);
+    console.log(`[generate] model: ${model}`);
+    console.log(`[generate] config:`, JSON.stringify(geminiConfig, null, 2));
+    console.log(`[generate] parts: [${refSummary}]`);
+
+    const t0 = Date.now();
     const response = await generateWithFallback(ai, {
       model,
       contents,
-      config: {
-        responseModalities: ['TEXT', 'IMAGE'],
-        imageConfig: { aspectRatio, imageSize },
-      } as Parameters<typeof ai.models.generateContent>[0]['config'],
+      config: geminiConfig as Parameters<typeof ai.models.generateContent>[0]['config'],
     });
+    const gemini_ms = Date.now() - t0;
+
+    const candidate = response.candidates?.[0];
+    const responseParts = candidate?.content?.parts ?? [];
+    const thoughtPart   = responseParts.find(p => typeof p.text === 'string' && p.text.trim() && !responseParts.find(x => x.inlineData)?.inlineData);
+    const imageParts    = responseParts.filter(p => p.inlineData?.mimeType?.startsWith('image/'));
+    const textParts     = responseParts.filter(p => typeof p.text === 'string' && p.text.trim());
+    const usage         = response.usageMetadata ?? {};
+
+    console.log(`[generate] ── RESPONSE FROM GOOGLE GEMINI API (${gemini_ms}ms) ──`);
+    console.log(`[generate] finishReason: ${candidate?.finishReason ?? 'unknown'}`);
+    console.log(`[generate] ── TOKEN USAGE (proves mediaResolution is applied) ──`);
+    console.log(`[generate] usageMetadata:`, JSON.stringify(usage, null, 2));
+    console.log(`[generate] ── THINKING (proves thinkingConfig.includeThoughts worked) ──`);
+    console.log(`[generate] thought parts returned: ${textParts.length}`);
+    if (textParts.length > 0) {
+      textParts.forEach((p, i) => {
+        console.log(`[generate] thought[${i}] (first 300 chars): "${(p.text ?? '').slice(0, 300)}"`);
+      });
+    } else {
+      console.log(`[generate] ⚠ No thought parts — thinkingConfig may not have been applied`);
+    }
+    console.log(`[generate] ── IMAGE OUTPUT ──`);
+    console.log(`[generate] images returned: ${imageParts.length} (${
+      imageParts.map(p => `${p.inlineData?.mimeType}, ${Math.round((p.inlineData?.data?.length ?? 0) * 0.75 / 1024)}KB`).join(', ')
+    })`);
+    console.log(`[generate] ── SAFETY RATINGS (proves safetySettings threshold was applied) ──`);
+    if (candidate?.safetyRatings?.length) {
+      console.log(`[generate] safetyRatings:`, JSON.stringify(candidate.safetyRatings, null, 2));
+    } else {
+      console.log(`[generate] no safetyRatings returned`);
+    }
 
     const { imageData, textHint } = parseImageResponse(response);
 

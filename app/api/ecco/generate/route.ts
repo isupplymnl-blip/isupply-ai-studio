@@ -74,32 +74,32 @@ async function runEccoGeneration(
       body: JSON.stringify(eccoBody),
     });
 
-    const data = await res.json() as {
-      code?: number;
-      msg?: string;
-      data?: { assetUrl: string };
-      meta?: { cost: number; remaining_credits: number };
-    };
+    const data = await res.json() as Record<string, unknown>;
+
+    console.log(`[ecco/generate] ── ASYNC RESPONSE FROM ECCOAPI job=${jobId} (status ${res.status}) ──`);
+    console.log(`[ecco/generate] full response:`, JSON.stringify(data, null, 2));
 
     if (!res.ok) {
-      console.error(`[ecco/generate] job=${jobId} ECCO ${res.status} body:`, JSON.stringify(data));
+      console.error(`[ecco/generate] job=${jobId} ECCO ${res.status}`);
       const msg = ECCO_ERRORS[res.status] ?? `EccoAPI error ${res.status}`;
       jobStore.set(jobId, { status: 'error', error: msg });
       return;
     }
 
-    if (!data.data?.assetUrl) {
+    const assetUrl = (data?.data as Record<string, unknown> | undefined)?.assetUrl as string | undefined;
+    if (!assetUrl) {
       jobStore.set(jobId, { status: 'error', error: 'EccoAPI returned no image URL' });
       return;
     }
 
     // Download image from signed URL (TTL: 900s) and persist locally
-    const imageUrl = await downloadAndPersist(data.data.assetUrl);
+    const meta = data?.meta as Record<string, unknown> | undefined;
+    const imageUrl = await downloadAndPersist(assetUrl);
     jobStore.set(jobId, {
       status: 'completed',
       imageUrl,
-      remaining_credits: data.meta?.remaining_credits,
-      cost: data.meta?.cost,
+      remaining_credits: meta?.remaining_credits as number | undefined,
+      cost: meta?.cost as number | undefined,
     });
     console.log(`[ecco/generate] job=${jobId} completed imageUrl=${imageUrl}`);
 
@@ -123,6 +123,12 @@ export async function POST(request: NextRequest) {
       useGoogleSearch?: boolean;
       referenceUrls?: string[];
       settings?: Record<string, unknown>;
+      // Gemini pass-through params
+      temperature?: number;
+      includeThoughts?: boolean;
+      mediaResolution?: string;
+      safetyThreshold?: string;
+      useAsync?: boolean;
     };
 
     const {
@@ -135,6 +141,11 @@ export async function POST(request: NextRequest) {
       useGoogleSearch = false,
       referenceUrls = [],
       settings = {},
+      temperature,
+      includeThoughts,
+      mediaResolution,
+      safetyThreshold,
+      useAsync = false,
     } = body;
 
     if (!prompt?.trim()) {
@@ -162,23 +173,87 @@ export async function POST(request: NextRequest) {
     }
 
     // settings.useGoogleSearch takes precedence over the top-level param
-    const resolvedSearch = (settings.useGoogleSearch as boolean | undefined) ?? useGoogleSearch;
+    const resolvedSearch       = (settings.useGoogleSearch  as boolean | undefined) ?? useGoogleSearch;
+    const resolvedTemperature  = (settings.temperature      as number  | undefined) ?? temperature ?? 1.0;
+    const resolvedThoughts     = (settings.includeThoughts  as boolean | undefined) ?? includeThoughts ?? true;
+    const resolvedMediaRes     = (settings.mediaResolution  as string  | undefined) ?? mediaResolution ?? 'media_resolution_high';
+    const resolvedSafetyThresh = (settings.safetyThreshold  as string  | undefined) ?? safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE';
+    const resolvedAsync        = (settings.useAsync         as boolean | undefined) ?? useAsync;
+
+    const safetyCategories = [
+      'HARM_CATEGORY_HARASSMENT',
+      'HARM_CATEGORY_HATE_SPEECH',
+      'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+      'HARM_CATEGORY_DANGEROUS_CONTENT',
+    ];
 
     const eccoBody: Record<string, unknown> = {
-      prompt: prompt.trim(),
+      prompt:          prompt.trim(),
       aspectRatio:     (settings.aspectRatio as string | undefined) ?? aspectRatio,
       imageSize:       (settings.imageSize   as string | undefined) ?? imageSize,
       useGoogleSearch: resolvedSearch,
+      // Extended Gemini pass-through params
+      temperature:        resolvedTemperature,
+      thinkingConfig:     { includeThoughts: resolvedThoughts },
+      mediaResolution:    resolvedMediaRes,
+      responseModalities: ['TEXT', 'IMAGE'],
+      safetySettings:     safetyCategories.map(category => ({ category, threshold: resolvedSafetyThresh })),
     };
     if (imageBase64.length) eccoBody.imageBase64 = imageBase64;
 
-    // Generate a local job ID and return 202 immediately
+    // ── Debug: log exactly what we're sending (strip base64 data for readability) ──
+    const loggableBody = {
+      ...eccoBody,
+      imageBase64: imageBase64.length
+        ? imageBase64.map((img, i) => `[image ${i + 1}: ${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)}KB]`)
+        : undefined,
+    };
+    console.log(`[ecco/generate] ── REQUEST TO ECCOAPI ──`);
+    console.log(`[ecco/generate] endpoint: https://eccoapi.com/api/v1/${model}/generate`);
+    console.log(`[ecco/generate] body:`, JSON.stringify(loggableBody, null, 2));
+
+    // ── Sync mode (default): block until EccoAPI responds, return imageUrl directly ──
+    if (!resolvedAsync) {
+      console.log(`[ecco/generate] mode: SYNC`);
+      try {
+        const endpoint = `https://eccoapi.com/api/v1/${model}/generate`;
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(eccoBody),
+        });
+        const data = await res.json() as Record<string, unknown>;
+        console.log(`[ecco/generate] ── RESPONSE FROM ECCOAPI (status ${res.status}) ──`);
+        console.log(`[ecco/generate] full response:`, JSON.stringify(data, null, 2));
+
+        const assetUrl = (data?.data as Record<string, unknown> | undefined)?.assetUrl as string | undefined;
+        if (!res.ok || !assetUrl) {
+          const msg = ECCO_ERRORS[res.status] ?? `EccoAPI error ${res.status}`;
+          console.error(`[ecco/generate] sync failed: ${msg}`);
+          return NextResponse.json({ error: msg }, { status: res.status });
+        }
+        const imageUrl = await downloadAndPersist(assetUrl);
+        console.log(`[ecco/generate] sync completed imageUrl=${imageUrl}`);
+        const meta = data?.meta as Record<string, unknown> | undefined;
+        return NextResponse.json({
+          imageUrl,
+          nodeId,
+          batchId,
+          remaining_credits: meta?.remaining_credits,
+          cost: meta?.cost,
+        }, { status: 200 });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[ecco/generate] sync error:', msg);
+        return NextResponse.json({ error: msg }, { status: 500 });
+      }
+    }
+
+    // ── Async mode (opt-in): fire-and-forget, return 202 + jobId for polling ──
     const jobId = `ecco-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     jobStore.set(jobId, { status: 'pending' });
 
-    console.log(`[ecco/generate] queued job=${jobId} model=${model} nodeId=${nodeId}`);
-
-    // Fire-and-forget background task
+    console.log(`[ecco/generate] mode: ASYNC queued job=${jobId}`);
     void runEccoGeneration(jobId, model, eccoBody, apiKey);
 
     return NextResponse.json({ jobId, nodeId, batchId }, { status: 202 });

@@ -157,9 +157,36 @@ function StudioCanvas() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...body, batchId: currentBatchId }),
       });
-      const data = await res.json() as { jobId?: string; error?: string };
-      if (!res.ok) throw new Error(data.error ?? 'EccoAPI request failed');
-      addJob({ id: data.jobId!, nodeId: outputNodeId, batchId: currentBatchId });
+
+      if (res.status === 200) {
+        // Sync mode — result is immediate
+        const data = await res.json() as { imageUrl?: string; error?: string; remaining_credits?: number; cost?: number };
+        if (!data.imageUrl) throw new Error(data.error ?? 'EccoAPI returned no image');
+        const prompt = pendingPromptsRef.current.get(outputNodeId) ?? '';
+        pendingPromptsRef.current.delete(outputNodeId);
+        setNodes(nds => nds.map(n =>
+          n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, error: undefined } } : n
+        ));
+        addGeneratedImageToBatch(currentBatchId, {
+          id: `img-${Date.now()}`,
+          url: data.imageUrl,
+          prompt,
+          nodeId: outputNodeId,
+          createdAt: new Date().toISOString(),
+        });
+        if (data.remaining_credits !== undefined) {
+          setEccoCredits(data.remaining_credits);
+          localStorage.setItem('isupply-ecco-credits', String(data.remaining_credits));
+        }
+      } else if (res.status === 202) {
+        // Async mode — poll for result
+        const data = await res.json() as { jobId?: string; error?: string };
+        if (!data.jobId) throw new Error(data.error ?? 'EccoAPI request failed');
+        addJob({ id: data.jobId, nodeId: outputNodeId, batchId: currentBatchId });
+      } else {
+        const data = await res.json() as { error?: string };
+        throw new Error(data.error ?? `EccoAPI error ${res.status}`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Generation failed';
       pendingPromptsRef.current.delete(outputNodeId);
@@ -167,7 +194,7 @@ function StudioCanvas() {
         n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
       ));
     }
-  }, [addJob]);
+  }, [addJob, addGeneratedImageToBatch]);
 
   // UI state
   const [selectedNodeId,    setSelectedNodeId]   = useState<string | null>(null);
@@ -443,7 +470,16 @@ function StudioCanvas() {
       const aspectRatio = settings?.aspectRatio ?? '4:5';
       const imageSize = settings?.imageSize ?? '1K';
       await Promise.all(allOutIds.map(outId =>
-        callEccoGenerate(outId, { prompt, nodeId: promptNodeId, model, aspectRatio, imageSize, useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls })
+        callEccoGenerate(outId, {
+          prompt, nodeId: promptNodeId, model, aspectRatio, imageSize,
+          useGoogleSearch:  settings?.useGoogleSearch  ?? false,
+          temperature:      settings?.temperature      ?? 1.0,
+          includeThoughts:  settings?.includeThoughts  ?? true,
+          mediaResolution:  settings?.mediaResolution  ?? 'media_resolution_high',
+          safetyThreshold:  settings?.safetyThreshold  ?? 'BLOCK_MEDIUM_AND_ABOVE',
+          useAsync:         settings?.useAsync         ?? false,
+          referenceUrls,
+        })
       ));
     } else {
       await Promise.all(allOutIds.map(outId =>
@@ -456,7 +492,18 @@ function StudioCanvas() {
     const referenceUrls = getConnectedUploadUrls(outputNodeId);
     if (activeProviderRef.current === 'ecco') {
       const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
-      await callEccoGenerate(outputNodeId, { prompt: lastPrompt, nodeId: outputNodeId, model, aspectRatio: settings?.aspectRatio ?? '4:5', imageSize: settings?.imageSize ?? '1K', useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls });
+      await callEccoGenerate(outputNodeId, {
+        prompt: lastPrompt, nodeId: outputNodeId, model,
+        aspectRatio:      settings?.aspectRatio     ?? '4:5',
+        imageSize:        settings?.imageSize       ?? '1K',
+        useGoogleSearch:  settings?.useGoogleSearch ?? false,
+        temperature:      settings?.temperature     ?? 1.0,
+        includeThoughts:  settings?.includeThoughts ?? true,
+        mediaResolution:  settings?.mediaResolution ?? 'media_resolution_high',
+        safetyThreshold:  settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
+        useAsync:         settings?.useAsync        ?? false,
+        referenceUrls,
+      });
     } else {
       await callGenerate([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
     }
@@ -470,7 +517,18 @@ function StudioCanvas() {
     for (const slide of pending) {
       if (activeProviderRef.current === 'ecco') {
         const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
-        await callEccoGenerate(slide.outputNodeId, { prompt: slide.prompt.trim(), nodeId, model, aspectRatio: settings?.aspectRatio ?? '4:5', imageSize: settings?.imageSize ?? '1K', useGoogleSearch: settings?.useGoogleSearch ?? false, referenceUrls });
+        await callEccoGenerate(slide.outputNodeId, {
+          prompt: slide.prompt.trim(), nodeId, model,
+          aspectRatio:      settings?.aspectRatio     ?? '4:5',
+          imageSize:        settings?.imageSize       ?? '1K',
+          useGoogleSearch:  settings?.useGoogleSearch ?? false,
+          temperature:      settings?.temperature     ?? 1.0,
+          includeThoughts:  settings?.includeThoughts ?? true,
+          mediaResolution:  settings?.mediaResolution ?? 'media_resolution_high',
+          safetyThreshold:  settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
+          useAsync:         settings?.useAsync        ?? false,
+          referenceUrls,
+        });
       } else {
         await callGenerate([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
       }
@@ -506,10 +564,15 @@ function StudioCanvas() {
       await callEccoGenerate(nodeId, {
         prompt: compositePrompt,
         nodeId,
-        model: (settings?.eccoModel as string | undefined) ?? 'nanobananapro',
-        aspectRatio: '16:9',
-        imageSize: settings?.imageSize ?? '1K',
+        model:           (settings?.eccoModel as string | undefined) ?? 'nanobananapro',
+        aspectRatio:     '16:9',
+        imageSize:       settings?.imageSize       ?? '1K',
         useGoogleSearch: settings?.useGoogleSearch ?? false,
+        temperature:     settings?.temperature     ?? 1.0,
+        includeThoughts: settings?.includeThoughts ?? true,
+        mediaResolution: settings?.mediaResolution ?? 'media_resolution_high',
+        safetyThreshold: settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
+        useAsync:        settings?.useAsync        ?? false,
         referenceUrls,
       });
     } else {
@@ -1021,16 +1084,41 @@ function StudioCanvas() {
             {!selectedAssetId && !selectedLibImgId && selectedNodeType === 'promptNode' && (
               <>
                 <SideLabel>Image Prompt Settings</SideLabel>
-                <Sec label={`Temperature — ${(settingsOf.temperature ?? 0.7).toFixed(1)}`}>
-                  <SliderRow value={settingsOf.temperature ?? 0.7} min={0} max={1} step={0.05} onChange={v => setSetting('temperature', v)} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Higher = more creative / unexpected</p>
+                <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
+                  <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models — lower values degrade reference adherence</p>
                 </Sec>
                 <Sec label={`Guidance Scale — ${settingsOf.guidanceScale ?? 7}`}>
                   <SliderRow value={settingsOf.guidanceScale ?? 7} min={1} max={15} step={1} onChange={v => setSetting('guidanceScale', v)} />
                   <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Higher = follows prompt more strictly</p>
                 </Sec>
-                <Sec label="Safety Filter">
-                  <Chips opts={['Standard', 'Low', 'High']} value={settingsOf.safetyFilter ?? 'Standard'} onChange={v => setSetting('safetyFilter', v)} />
+                <Sec label="Safety Threshold">
+                  <Chips opts={['Off', 'Low Block', 'Medium', 'High Block']} value={
+                    settingsOf.safetyThreshold === 'BLOCK_NONE'          ? 'Off' :
+                    settingsOf.safetyThreshold === 'BLOCK_ONLY_HIGH'     ? 'Low Block' :
+                    settingsOf.safetyThreshold === 'BLOCK_LOW_AND_ABOVE' ? 'High Block' : 'Medium'
+                  } onChange={v => setSetting('safetyThreshold',
+                    v === 'Off'        ? 'BLOCK_NONE' :
+                    v === 'Low Block'  ? 'BLOCK_ONLY_HIGH' :
+                    v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
+                                        'BLOCK_MEDIUM_AND_ABOVE'
+                  )} cols={2} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
+                </Sec>
+                <Sec label="Thinking Mode">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                    <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves reference adherence)</span>
+                  </label>
+                </Sec>
+                <Sec label="Media Resolution">
+                  <Chips opts={['High', 'Medium', 'Low']} value={
+                    settingsOf.mediaResolution === 'media_resolution_low'    ? 'Low' :
+                    settingsOf.mediaResolution === 'media_resolution_medium' ? 'Medium' : 'High'
+                  } onChange={v => setSetting('mediaResolution',
+                    v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
+                  )} cols={3} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
                 </Sec>
                 <Sec label="Seed (empty = random)">
                   <input type="text" placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value)}
@@ -1054,6 +1142,13 @@ function StudioCanvas() {
                         <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
                         <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
                       </label>
+                    </Sec>
+                    <Sec label="Async Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                      </label>
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                     </Sec>
                   </>
                 ) : (
@@ -1101,15 +1196,40 @@ function StudioCanvas() {
                     <p style={{ fontSize: 11, color: '#9090A8' }}>{slides.length} slides · {slides.filter(s => s.prompt.trim()).length} filled</p>
                     <p style={{ fontSize: 10, color: '#55556A', marginTop: 4, lineHeight: 1.5 }}>Settings below apply to all slides in this carousel.</p>
                   </Sec>
-                  <Sec label={`Temperature — ${(settingsOf.temperature ?? 0.7).toFixed(1)}`}>
-                    <SliderRow value={settingsOf.temperature ?? 0.7} min={0} max={1} step={0.05} onChange={v => setSetting('temperature', v)} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Higher = more creative</p>
+                  <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
+                    <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
+                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models</p>
                   </Sec>
                   <Sec label={`Guidance Scale — ${settingsOf.guidanceScale ?? 7}`}>
                     <SliderRow value={settingsOf.guidanceScale ?? 7} min={1} max={15} step={1} onChange={v => setSetting('guidanceScale', v)} />
                   </Sec>
-                  <Sec label="Safety Filter">
-                    <Chips opts={['Standard', 'Low', 'High']} value={settingsOf.safetyFilter ?? 'Standard'} onChange={v => setSetting('safetyFilter', v)} />
+                  <Sec label="Safety Threshold">
+                    <Chips opts={['Off', 'Low Block', 'Medium', 'High Block']} value={
+                      settingsOf.safetyThreshold === 'BLOCK_NONE'          ? 'Off' :
+                      settingsOf.safetyThreshold === 'BLOCK_ONLY_HIGH'     ? 'Low Block' :
+                      settingsOf.safetyThreshold === 'BLOCK_LOW_AND_ABOVE' ? 'High Block' : 'Medium'
+                    } onChange={v => setSetting('safetyThreshold',
+                      v === 'Off'        ? 'BLOCK_NONE' :
+                      v === 'Low Block'  ? 'BLOCK_ONLY_HIGH' :
+                      v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
+                                          'BLOCK_MEDIUM_AND_ABOVE'
+                    )} cols={2} />
+                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
+                  </Sec>
+                  <Sec label="Thinking Mode">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                      <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves reference adherence)</span>
+                    </label>
+                  </Sec>
+                  <Sec label="Media Resolution">
+                    <Chips opts={['High', 'Medium', 'Low']} value={
+                      settingsOf.mediaResolution === 'media_resolution_low'    ? 'Low' :
+                      settingsOf.mediaResolution === 'media_resolution_medium' ? 'Medium' : 'High'
+                    } onChange={v => setSetting('mediaResolution',
+                      v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
+                    )} cols={3} />
+                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
                   </Sec>
                   <Sec label="Seed (empty = random)">
                     <input type="text" placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value)}
@@ -1133,6 +1253,13 @@ function StudioCanvas() {
                           <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
                           <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
                         </label>
+                      </Sec>
+                      <Sec label="Async Mode">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                       </Sec>
                     </>
                   ) : (
@@ -1177,6 +1304,38 @@ function StudioCanvas() {
                 <Sec label="Output">
                   <p style={{ fontSize: 10, color: '#55556A', lineHeight: 1.6 }}>Always outputs a single 16:9 composite image with 4 panels: front, 3/4 angle, side profile, and rear view of the model.</p>
                 </Sec>
+                <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
+                  <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models</p>
+                </Sec>
+                <Sec label="Safety Threshold">
+                  <Chips opts={['Off', 'Low Block', 'Medium', 'High Block']} value={
+                    settingsOf.safetyThreshold === 'BLOCK_NONE'          ? 'Off' :
+                    settingsOf.safetyThreshold === 'BLOCK_ONLY_HIGH'     ? 'Low Block' :
+                    settingsOf.safetyThreshold === 'BLOCK_LOW_AND_ABOVE' ? 'High Block' : 'Medium'
+                  } onChange={v => setSetting('safetyThreshold',
+                    v === 'Off'        ? 'BLOCK_NONE' :
+                    v === 'Low Block'  ? 'BLOCK_ONLY_HIGH' :
+                    v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
+                                        'BLOCK_MEDIUM_AND_ABOVE'
+                  )} cols={2} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe content</p>
+                </Sec>
+                <Sec label="Thinking Mode">
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                    <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves consistency)</span>
+                  </label>
+                </Sec>
+                <Sec label="Media Resolution">
+                  <Chips opts={['High', 'Medium', 'Low']} value={
+                    settingsOf.mediaResolution === 'media_resolution_low'    ? 'Low' :
+                    settingsOf.mediaResolution === 'media_resolution_medium' ? 'Medium' : 'High'
+                  } onChange={v => setSetting('mediaResolution',
+                    v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
+                  )} cols={3} />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
+                </Sec>
                 {activeProvider === 'ecco' && (
                   <>
                     <Sec label="Model">
@@ -1190,6 +1349,13 @@ function StudioCanvas() {
                         <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
                         <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
                       </label>
+                    </Sec>
+                    <Sec label="Async Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                      </label>
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping in async queues</p>
                     </Sec>
                   </>
                 )}
