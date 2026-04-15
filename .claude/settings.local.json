@@ -28,7 +28,23 @@
       "Bash(gh auth:*)",
       "Bash(git init:*)",
       "Bash(git remote:*)",
-      "Bash(grep -n \"AI_PROVIDER\\\\|ECCO\\\\|GEMINI\" \"C:/isupply-ai-studio-main/isupply-ai-studio-main/next.config\"*)"
+      "Bash(grep -n \"AI_PROVIDER\\\\|ECCO\\\\|GEMINI\" \"C:/isupply-ai-studio-main/isupply-ai-studio-main/next.config\"*)",
+      "Bash(npx @smithery/cli@latest skill add 0xkynz/memory-bank --agent claude-code)",
+      "WebSearch",
+      "WebFetch(domain:smithery.ai)",
+      "Skill(update-config)",
+      "Read(//c/Users/miuri/.claude//**)",
+      "Read(//c/Users/miuri/.claude/**)",
+      "Bash(gh repo:*)",
+      "Bash(python -m json.tool)",
+      "Bash(pip install:*)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(C:/Users/miuri/AppData/Roaming/Python/Python314/Scripts/code-review-graph.exe install:*)",
+      "Bash(uvx --version)",
+      "mcp__plugin_claude-mem_mcp-search__smart_outline"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "code-review-graph"
+  ]
 }

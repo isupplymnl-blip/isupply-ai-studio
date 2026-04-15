@@ -9,6 +9,8 @@ export interface GeneratedImage {
   prompt: string;
   nodeId: string;
   createdAt: string;
+  source?: 'local' | 'supabase';
+  supabaseUrl?: string;
 }
 
 export interface Batch {
@@ -175,10 +177,19 @@ export function useBatchHistory() {
     setGlobalLibrary(prev => prev.filter(img => img.id !== imageId));
   }, []);
 
+  /** Mark images as supabase-hosted after successful export */
+  const updateGeneratedImageSource = useCallback((localUrl: string, supabaseUrl: string) => {
+    const updater = (img: GeneratedImage) =>
+      img.url === localUrl ? { ...img, source: 'supabase' as const, supabaseUrl } : img;
+    setGlobalLibrary(prev => prev.map(updater));
+    setBatches(prev => prev.map(b => ({ ...b, generatedImages: b.generatedImages.map(updater) })));
+  }, []);
+
   return {
     batches, activeBatch, activeBatchId, globalLibrary,
     saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch,
     renameBatch, deleteBatch,
     addGeneratedImage, addGeneratedImageToBatch, removeGeneratedImage, removeFromGlobalLibrary,
+    updateGeneratedImageSource,
   };
 }

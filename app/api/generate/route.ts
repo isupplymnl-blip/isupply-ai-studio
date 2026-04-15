@@ -180,6 +180,84 @@ function parseImageResponse(response: GenerateContentResponse): ParsedResponse {
   return { imageData: imagePart.inlineData.data, textHint };
 }
 
+// ─── SSE streaming helpers ────────────────────────────────────────────────────
+
+const SSE_HEADERS = {
+  'Content-Type':      'text/event-stream',
+  'Cache-Control':     'no-cache',
+  'Connection':        'keep-alive',
+  'X-Accel-Buffering': 'no',
+} as const;
+
+/** Iterate generateContentStream chunks and return the first image found. */
+async function extractImageFromStream(
+  stream: AsyncGenerator<GenerateContentResponse>,
+): Promise<{ imageData: string; textHint?: string; thoughtSignature?: string }> {
+  let imageData: string | undefined;
+  let textHint:  string | undefined;
+  let thoughtSignature: string | undefined;
+
+  for await (const chunk of stream) {
+    const candidate = chunk.candidates?.[0];
+    const parts: Part[] = candidate?.content?.parts ?? [];
+
+    const finishReason = candidate?.finishReason;
+    if (finishReason === 'SAFETY') {
+      const blocked = candidate?.safetyRatings?.filter(r => r.blocked).map(r => String(r.category).replace('HARM_CATEGORY_', '')).join(', ');
+      throw new Error(`Prompt blocked by Gemini text safety filters${blocked ? ` (${blocked})` : ''}. Try rephrasing.`);
+    }
+    if (finishReason === 'IMAGE_SAFETY') {
+      throw new Error('Generated image rejected by Gemini image safety filters (IMAGE_SAFETY).');
+    }
+
+    const imagePart = parts.find(p => p.inlineData?.data && p.inlineData.mimeType?.startsWith('image/'));
+    if (imagePart?.inlineData?.data) imageData = imagePart.inlineData.data;
+
+    const textPart = parts.find(p => typeof p.text === 'string' && p.text.trim());
+    if (textPart?.text) textHint = textPart.text;
+
+    const tsPart = (parts as Array<{ thoughtSignature?: string }>).find(p => p.thoughtSignature);
+    if (tsPart?.thoughtSignature) thoughtSignature = tsPart.thoughtSignature;
+  }
+
+  if (!imageData) {
+    if (textHint) throw new Error(`Gemini returned text instead of an image: "${textHint.slice(0, 300)}"`);
+    throw new Error('Streaming generation returned no image. Verify GEMINI_API_KEY has image generation access.');
+  }
+  return { imageData, textHint, thoughtSignature };
+}
+
+/**
+ * Open the SSE stream immediately (with a first heartbeat), then run `runner`.
+ * This ensures the connection stays alive through long generation times.
+ */
+function sseWrap(
+  runner: (send: (event: string, data: unknown) => void) => Promise<void>,
+): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    async start(ctrl) {
+      const send = (event: string, data: unknown) =>
+        ctrl.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+
+      send('heartbeat', { ts: Date.now() });
+      const hb = setInterval(() => send('heartbeat', { ts: Date.now() }), 15_000);
+
+      try {
+        await runner(send);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[generate-stream] error:', message);
+        send('error', { error: message });
+      } finally {
+        clearInterval(hb);
+        ctrl.close();
+      }
+    },
+  });
+  return new Response(body, { headers: SSE_HEADERS });
+}
+
 // ─── POST /api/generate ───────────────────────────────────────────────────────
 
 export async function POST(request: NextRequest) {
@@ -190,9 +268,11 @@ export async function POST(request: NextRequest) {
       type?: 'slide' | 'model-creation';
       settings?: Record<string, unknown>;
       referenceUrls?: string[];
+      thoughtSignature?: string;
+      useStreaming?: boolean;
     };
 
-    const { prompt, nodeId, type, settings = {}, referenceUrls = [] } = body;
+    const { prompt, nodeId, type, settings = {}, referenceUrls = [], thoughtSignature: incomingThoughtSig, useStreaming = false } = body;
 
     if (!prompt?.trim()) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -209,20 +289,24 @@ export async function POST(request: NextRequest) {
 
     console.log(`[generate] model=${model} type=${type ?? 'slide'} nodeId=${nodeId} search=${useGoogleSearch} imageSearch=${useImageSearch}`);
 
-    // ── Model Creation path (text-only → 16:9 four-panel composite) ───────────
+    // ── Model Creation path (text-only → composite) ──────────────────────────
     if (type === 'model-creation') {
       const textPrompt = buildModelPrompt(prompt, settings);
       const contents: Content[] = [{ role: 'user', parts: [{ text: textPrompt }] }];
 
       const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+      const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
       const includeThoughts = settings.includeThoughts !== false;
       const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
+      const aspectRatio     = modelCreationAspectRatio(prompt);
+      const imageSize       = geminiSize((settings.imageSize as string | undefined) ?? (settings.resolution as string | undefined) ?? '1K');
 
       const geminiConfig = {
         temperature,
+        ...(topP !== undefined ? { topP } : {}),
         responseModalities: ['TEXT', 'IMAGE'],
-        thinkingConfig: { includeThoughts },
-        imageConfig: { aspectRatio: '16:9', imageSize: '1K', mediaResolution: 'media_resolution_high' },
+        thinkingConfig: { includeThoughts, ...(incomingThoughtSig ? { thoughtSignature: incomingThoughtSig } : {}) },
+        imageConfig: { aspectRatio, imageSize, mediaResolution: 'media_resolution_high' },
         safetySettings: buildSafetySettings(safetyThresh),
         ...(searchTools ? { tools: searchTools } : {}),
       };
@@ -305,18 +389,46 @@ export async function POST(request: NextRequest) {
     const contents: Content[] = [{ role: 'user', parts }];
 
     const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+    const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
     const includeThoughts = settings.includeThoughts !== false;
     const mediaRes        = (settings.mediaResolution as string | undefined) ?? 'media_resolution_high';
     const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
 
     const geminiConfig = {
       temperature,
+      ...(topP !== undefined ? { topP } : {}),
       responseModalities: ['TEXT', 'IMAGE'],
-      thinkingConfig: { includeThoughts },
+      thinkingConfig: { includeThoughts, ...(incomingThoughtSig ? { thoughtSignature: incomingThoughtSig } : {}) },
       imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
       safetySettings: buildSafetySettings(safetyThresh),
       ...(searchTools ? { tools: searchTools } : {}),
     };
+
+    // ── SSE streaming path ───────────────────────────────────────────────────
+    if (useStreaming) {
+      return sseWrap(async (send) => {
+        const refSummaryStream = parts
+          .map((p, i) => i === 0
+            ? `text(${(p.text ?? '').length} chars)`
+            : `image(${p.inlineData?.mimeType ?? '?'}, ${Math.round(((p.inlineData?.data?.length ?? 0) * 0.75) / 1024)}KB)`
+          ).join(', ');
+        console.log(`[generate-stream] model: ${model}`);
+        console.log(`[generate-stream] parts: [${refSummaryStream}]`);
+
+        const t0 = Date.now();
+        const stream = await ai.models.generateContentStream({
+          model,
+          contents,
+          config: geminiConfig as Parameters<typeof ai.models.generateContent>[0]['config'],
+        });
+        const { imageData, textHint, thoughtSignature: streamSig } = await extractImageFromStream(stream);
+        console.log(`[generate-stream] response received (${Date.now() - t0}ms)`);
+        if (textHint) console.log('[generate-stream] text alongside image:', textHint.slice(0, 200));
+
+        const imageUrl = await persistImage(imageData);
+        send('complete', { imageUrl, nodeId, matchedRefs: allImages.map(m => m.name), ...(streamSig ? { thoughtSignature: streamSig } : {}) });
+      });
+    }
 
     const refSummary = parts
       .map((p, i) => i === 0
@@ -374,12 +486,19 @@ export async function POST(request: NextRequest) {
       console.log('[generate] model text alongside image:', textHint.slice(0, 200));
     }
 
+    // Extract thoughtSignature so the carousel loop can thread it to the next slide
+    // for consistent character/product identity across multi-slide generations.
+    const outParts = response.candidates?.[0]?.content?.parts ?? [];
+    const thoughtSignature = (outParts as Array<{ thoughtSignature?: string }>)
+      .find(p => p.thoughtSignature)?.thoughtSignature;
+
     const imageUrl = await persistImage(imageData);
     return NextResponse.json({
       success: true,
       imageUrl,
       matchedRefs: allImages.map(m => m.name),
       nodeId,
+      ...(thoughtSignature ? { thoughtSignature } : {}),
     });
 
   } catch (err: unknown) {
@@ -409,17 +528,31 @@ function buildSlidePrompt(
   return `${refDesc}${prompt}. ${ratioHint}${neg ? ` AVOID: ${neg}.` : ''} Photorealistic, ultra high quality, professional product photography.`;
 }
 
-function detectModelCount(description: string): 1 | 2 {
+function detectModelCount(description: string): 1 | 2 | 3 {
   const lower = description.toLowerCase();
-  return /\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower) ? 2 : 1;
+  if (/\b(three models?|3 models?|three people|3 people|3 persons?|three persons?)\b/.test(lower)) return 3;
+  if (/\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower)) return 2;
+  return 1;
+}
+
+export function modelCreationAspectRatio(description: string): '16:9' | '21:9' {
+  return detectModelCount(description) >= 2 ? '21:9' : '16:9';
 }
 
 function buildModelPrompt(description: string, settings: Record<string, unknown>): string {
   const style  = (settings.style      as string | undefined) ?? 'realistic commercial photography';
   const light  = (settings.lighting   as string | undefined) ?? 'professional studio lighting';
   const bg     = (settings.background as string | undefined) ?? 'pure white';
-  if (detectModelCount(description) === 2) {
-    return `Create a professional composite image with FOUR panels in a single 16:9 frame showing TWO models, each from two angles.
+  const count  = detectModelCount(description);
+  if (count === 3) {
+    return `Create a professional composite image with SIX panels in a single ultra-wide 21:9 frame showing THREE models, each from two angles.
+Panels layout (left to right): [Model 1 Front] [Model 1 Back] [Model 2 Front] [Model 2 Back] [Model 3 Front] [Model 3 Back].
+Models: ${description}.
+Style: ${style}. Lighting: ${light}. Background: ${bg}.
+Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`;
+  }
+  if (count === 2) {
+    return `Create a professional composite image with FOUR panels in a single ultra-wide 21:9 frame showing TWO models, each from two angles.
 Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view].
 Models: ${description}.
 Style: ${style}. Lighting: ${light}. Background: ${bg}.

@@ -13,6 +13,7 @@ export interface SavedImage {
 export interface NodeSettings {
   // Image Prompt / Carousel
   temperature?: number;       // default 1.0
+  topP?: number;              // top-p nucleus sampling (0–1)
   guidanceScale?: number;
   negativePrompt?: string;
   seed?: string;
@@ -29,6 +30,8 @@ export interface NodeSettings {
   useImageSearch?: boolean;   // default false — image results from Google Search (Flash Image model only)
   useAsync?: boolean;         // default false (sync mode)
   useStreaming?: boolean;     // default false — SSE streaming to bypass 524 timeout
+  // Per-node provider override (overrides the global toolbar selection for this node)
+  providerOverride?: 'gemini' | 'ecco' | 'pudding';
   // Image Output
   resolution?: string;
   aspectRatio?: string;
@@ -57,6 +60,9 @@ export interface StudioContextType {
   onAddToLibrary:      (image: Omit<GeneratedImage, 'id'>) => void;
   // Node management
   onDeleteNode:        (nodeId: string) => void;
+  // Carousel slide management
+  onAddCarouselSlide:    (carouselNodeId: string) => void;
+  onRemoveCarouselSlide: (carouselNodeId: string, slideIndex: number) => void;
   // Click-to-connect
   connectingFromId:    string | null;
   onStartConnect:      (nodeId: string) => void;
@@ -76,6 +82,8 @@ export const StudioContext = createContext<StudioContextType>({
   onSelectNode:        () => {},
   onAddToLibrary:      () => {},
   onDeleteNode:        () => {},
+  onAddCarouselSlide:    () => {},
+  onRemoveCarouselSlide: () => {},
   connectingFromId:    null,
   onStartConnect:      () => {},
   onCompleteConnect:   () => {},

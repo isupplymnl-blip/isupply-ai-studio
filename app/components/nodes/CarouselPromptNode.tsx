@@ -14,7 +14,7 @@ interface CarouselNodeData {
 interface TagStatus { name: string; tags: string[]; matched: boolean; }
 
 export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeData>) {
-  const { onGenerateCarousel, onUpdateData, onUpdateSettings, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, activeProvider } = useContext(StudioContext);
+  const { onGenerateCarousel, onUpdateData, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, onAddCarouselSlide, onRemoveCarouselSlide } = useContext(StudioContext);
   const allNodes = useNodes();
 
   const [slides, setSlides] = useState<CarouselSlide[]>(data.slides ?? []);
@@ -25,6 +25,7 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const debounceTagRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const debounceDataRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const dragIndexRef = useRef<number | null>(null);
 
   // Clamp index when slides change
   useEffect(() => {
@@ -177,17 +178,35 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>←</button>
 
-        {/* Dot indicators */}
+        {/* Dot indicators — draggable to reorder slides */}
         <div style={{ flex: 1, display: 'flex', gap: 4, alignItems: 'center', overflowX: 'auto', padding: '2px 0' }}>
           {slides.map((s, i) => {
             const active = i === currentIndex;
             const filled = !!s.prompt.trim();
             return (
               <button key={s.id} className="nodrag"
+                draggable
+                onDragStart={e => { e.stopPropagation(); dragIndexRef.current = i; e.dataTransfer.effectAllowed = 'move'; }}
+                onDragOver={e => { e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; }}
+                onDrop={e => {
+                  e.preventDefault(); e.stopPropagation();
+                  const from = dragIndexRef.current;
+                  if (from === null || from === i) return;
+                  setSlides(prev => {
+                    const next = [...prev];
+                    const [moved] = next.splice(from, 1);
+                    next.splice(i, 0, moved);
+                    return next;
+                  });
+                  setCurrentIndex(i);
+                  dragIndexRef.current = null;
+                }}
+                onDragEnd={() => { dragIndexRef.current = null; }}
                 onClick={e => { e.stopPropagation(); setCurrentIndex(i); }}
+                title={`Slide ${i + 1}${filled ? ' (has prompt)' : ''} — drag to reorder`}
                 style={{
                   width: active ? 20 : 8, height: 8, borderRadius: 4, flexShrink: 0,
-                  border: 'none', cursor: 'pointer',
+                  border: 'none', cursor: 'grab',
                   background: active ? '#7C3AED' : filled ? '#0D9488' : '#2A2A35',
                   transition: 'width 0.2s, background 0.2s',
                   padding: 0,
@@ -209,6 +228,27 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
             cursor: currentIndex === totalCount - 1 ? 'not-allowed' : 'pointer', fontSize: 13,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}>→</button>
+
+        {/* Add / Remove slide buttons */}
+        <button className="nodrag"
+          onClick={e => { e.stopPropagation(); onRemoveCarouselSlide(id, currentIndex); }}
+          disabled={totalCount <= 1}
+          title="Remove current slide"
+          style={{
+            width: 22, height: 22, borderRadius: 5, border: '1px solid #F43F5E44',
+            background: '#111113', color: totalCount <= 1 ? '#2A2A35' : '#F43F5E',
+            cursor: totalCount <= 1 ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>−</button>
+        <button className="nodrag"
+          onClick={e => { e.stopPropagation(); onAddCarouselSlide(id); }}
+          title="Add slide"
+          style={{
+            width: 22, height: 22, borderRadius: 5, border: '1px solid #0D948844',
+            background: '#111113', color: '#0D9488',
+            cursor: 'pointer', fontSize: 14, fontWeight: 700,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+          }}>+</button>
       </div>
 
       {/* Current slide label */}
@@ -234,7 +274,22 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
       {/* Live reference detection */}
       {uploadAssets.length > 0 && (
         <div style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reference Detection — Slide {currentIndex + 1}</p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+            <p style={{ fontSize: 9, color: '#55556A', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>
+              Refs — Slide {currentIndex + 1}
+            </p>
+            <span
+              title="Generation uses up to 14 matched reference images per call"
+              style={{
+                fontSize: 9,
+                color: tagStatuses.filter(s => s.matched).length > 14 ? '#F59E0B' : '#55556A',
+                background: '#0A0A0B', padding: '1px 6px', borderRadius: 10,
+                border: '1px solid #2A2A35', cursor: 'default',
+              }}
+            >
+              {tagStatuses.filter(s => s.matched).length}/14
+            </span>
+          </div>
           {tagStatuses.map(s => (
             <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <div style={{ width: 5, height: 5, borderRadius: '50%', background: s.matched ? '#0D9488' : '#2A2A35', boxShadow: s.matched ? '0 0 4px #0D9488' : 'none', flexShrink: 0, transition: 'all 0.2s' }} />
@@ -249,70 +304,6 @@ export default function CarouselPromptNode({ id, data }: NodeProps<CarouselNodeD
       <div style={{ height: 3, background: '#2A2A35', borderRadius: 2, marginBottom: 9, overflow: 'hidden' }}>
         <div style={{ height: '100%', borderRadius: 2, background: 'linear-gradient(90deg, #7C3AED, #0D9488)', width: `${totalCount ? (filledCount / totalCount) * 100 : 0}%`, transition: 'width 0.3s' }} />
       </div>
-
-      {/* EccoAPI inline controls */}
-      {activeProvider === 'ecco' && (
-        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EccoAPI Settings</p>
-          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-            {(['nanobanana31', 'nanobananapro'] as const).map(m => {
-              const active = (data.settings?.eccoModel ?? 'nanobanana31') === m;
-              return (
-                <button key={m} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { eccoModel: m }); }}
-                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
-                  {m === 'nanobanana31' ? 'NB 3.1' : 'NB Pro'}
-                </button>
-              );
-            })}
-          </div>
-          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-            {(['1K', '2K', '4K'] as const).map(s => {
-              const active = (data.settings?.imageSize ?? '1K') === s;
-              return (
-                <button key={s} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { imageSize: s }); }}
-                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
-                  {s}
-                </button>
-              );
-            })}
-          </div>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
-            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
-              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
-              style={{ accentColor: '#7C3AED' }} />
-            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
-          </label>
-          {data.settings?.useGoogleSearch && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
-              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
-                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
-                style={{ accentColor: '#7C3AED' }} />
-              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
-            </label>
-          )}
-        </div>
-      )}
-
-      {/* Google Search grounding for Gemini / Pudding */}
-      {(activeProvider === 'gemini' || activeProvider === 'pudding') && (
-        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Search Grounding</p>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
-            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
-              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
-              style={{ accentColor: '#7C3AED' }} />
-            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
-          </label>
-          {data.settings?.useGoogleSearch && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
-              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
-                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
-                style={{ accentColor: '#7C3AED' }} />
-              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
-            </label>
-          )}
-        </div>
-      )}
 
       {/* Generate button */}
       <button

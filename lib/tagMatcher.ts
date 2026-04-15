@@ -1,5 +1,5 @@
 import { readFile } from 'fs/promises';
-import path from 'path';
+import { getAssetsDbPath } from './storage';
 
 interface AssetRecord {
   id: string;
@@ -18,7 +18,7 @@ export interface MatchedImage {
 /** Scan prompt text against locally stored asset tags.
  *  Returns only assets whose tags appear in the prompt (case-insensitive). */
 export async function findMatchingImages(prompt: string): Promise<MatchedImage[]> {
-  const dataFile = path.join(process.cwd(), 'data', 'assets.json');
+  const dataFile = getAssetsDbPath();
   let assets: AssetRecord[] = [];
   try {
     const raw = await readFile(dataFile, 'utf-8');

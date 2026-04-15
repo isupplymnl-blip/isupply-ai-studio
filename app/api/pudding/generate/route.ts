@@ -263,14 +263,18 @@ export async function POST(request: NextRequest) {
       const contents: Content[] = [{ role: 'user', parts: [{ text: textPrompt }] }];
 
       const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+      const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
       const includeThoughts = settings.includeThoughts !== false;
       const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
+      const aspectRatio     = modelCreationAspectRatio(prompt);
+      const imageSize       = geminiSize((settings.imageSize as string | undefined) ?? (settings.resolution as string | undefined) ?? '1K');
 
       const genConfig = {
         temperature,
+        ...(topP !== undefined ? { topP } : {}),
         responseModalities: ['TEXT', 'IMAGE'],
         thinkingConfig: { includeThoughts },
-        imageConfig: { aspectRatio: '16:9', imageSize: '1K', mediaResolution: 'media_resolution_high' },
+        imageConfig: { aspectRatio, imageSize, mediaResolution: 'media_resolution_high' },
         safetySettings: buildSafetySettings(safetyThresh),
         ...(searchTools ? { tools: searchTools } : {}),
       };
@@ -313,8 +317,9 @@ export async function POST(request: NextRequest) {
 
     // Shared setup (cheap — no I/O)
     const aspectRatio     = (settings.aspectRatio  as string | undefined) ?? '4:5';
-    const imageSize       = geminiSize((settings.resolution as string | undefined) ?? '1K');
+    const imageSize       = geminiSize((settings.resolution as string | undefined) ?? (settings.imageSize as string | undefined) ?? '1K');
     const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
+    const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
     const includeThoughts = settings.includeThoughts !== false;
     const mediaRes        = (settings.mediaResolution as string | undefined) ?? 'media_resolution_high';
     const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
@@ -354,6 +359,7 @@ export async function POST(request: NextRequest) {
 
         const genConfig = {
           temperature,
+          ...(topP !== undefined ? { topP } : {}),
           responseModalities: ['TEXT', 'IMAGE'],
           thinkingConfig: { includeThoughts },
           imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
@@ -394,6 +400,7 @@ export async function POST(request: NextRequest) {
 
     const genConfig = {
       temperature,
+      ...(topP !== undefined ? { topP } : {}),
       responseModalities: ['TEXT', 'IMAGE'],
       thinkingConfig: { includeThoughts },
       imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
@@ -462,17 +469,31 @@ function buildSlidePrompt(
   return `${refDesc}${prompt}. ${ratioHint}${neg ? ` AVOID: ${neg}.` : ''} Photorealistic, ultra high quality, professional product photography.`;
 }
 
-function detectModelCount(description: string): 1 | 2 {
+function detectModelCount(description: string): 1 | 2 | 3 {
   const lower = description.toLowerCase();
-  return /\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower) ? 2 : 1;
+  if (/\b(three models?|3 models?|three people|3 people|3 persons?|three persons?)\b/.test(lower)) return 3;
+  if (/\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower)) return 2;
+  return 1;
+}
+
+function modelCreationAspectRatio(description: string): '16:9' | '21:9' {
+  return detectModelCount(description) >= 2 ? '21:9' : '16:9';
 }
 
 function buildModelPrompt(description: string, settings: Record<string, unknown>): string {
   const style  = (settings.style      as string | undefined) ?? 'realistic commercial photography';
   const light  = (settings.lighting   as string | undefined) ?? 'professional studio lighting';
   const bg     = (settings.background as string | undefined) ?? 'pure white';
-  if (detectModelCount(description) === 2) {
-    return `Create a professional composite image with FOUR panels in a single 16:9 frame showing TWO models, each from two angles.
+  const count  = detectModelCount(description);
+  if (count === 3) {
+    return `Create a professional composite image with SIX panels in a single ultra-wide 21:9 frame showing THREE models, each from two angles.
+Panels layout (left to right): [Model 1 Front] [Model 1 Back] [Model 2 Front] [Model 2 Back] [Model 3 Front] [Model 3 Back].
+Models: ${description}.
+Style: ${style}. Lighting: ${light}. Background: ${bg}.
+Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`;
+  }
+  if (count === 2) {
+    return `Create a professional composite image with FOUR panels in a single ultra-wide 21:9 frame showing TWO models, each from two angles.
 Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view].
 Models: ${description}.
 Style: ${style}. Lighting: ${light}. Background: ${bg}.

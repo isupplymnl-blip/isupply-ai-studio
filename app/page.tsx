@@ -13,6 +13,7 @@ import ReactFlow, {
   Edge,
   Node,
   Connection,
+  NodeChange,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import JSZip from 'jszip';
@@ -25,6 +26,7 @@ import ModelCreationNode from './components/nodes/ModelCreationNode';
 import CarouselPromptNode from './components/nodes/CarouselPromptNode';
 import GradientEdge      from './components/edges/GradientEdge';
 import WelcomeDialog     from './components/WelcomeDialog';
+import { ErrorBoundary }  from './components/ErrorBoundary';
 import { StudioContext, SavedImage, NodeSettings, CarouselSlide } from './context/StudioContext';
 import { useBatchHistory, GeneratedImage } from './hooks/useBatchHistory';
 import { useGenerationQueue, GenerationJob } from './hooks/useGenerationQueue';
@@ -36,7 +38,7 @@ const mkEdge = (id: string, src: string, tgt: string): Edge => ({ id, source: sr
 
 // ─── Main canvas component ────────────────────────────────────────────────────
 function StudioCanvas() {
-  const { batches, activeBatch, activeBatchId, globalLibrary, saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch, renameBatch, deleteBatch, addGeneratedImage, addGeneratedImageToBatch, removeGeneratedImage, removeFromGlobalLibrary } = useBatchHistory();
+  const { batches, activeBatch, activeBatchId, globalLibrary, saveCurrentBatch, switchBatch, newBatch, newAutomatedBatch, renameBatch, deleteBatch, addGeneratedImage, addGeneratedImageToBatch, removeGeneratedImage, removeFromGlobalLibrary, updateGeneratedImageSource } = useBatchHistory();
   const libraryImages = globalLibrary;
 
   const [nodes, setNodes] = useState<Node[]>(activeBatch?.nodes ?? []);
@@ -50,6 +52,9 @@ function StudioCanvas() {
 
   // Sidebar batch-type dropdown
   const [showBatchTypeMenu, setShowBatchTypeMenu] = useState(false);
+
+  // Left sidebar collapse
+  const [leftSidebarOpen, setLeftSidebarOpen] = useState(true);
 
   // Sync nodes/edges when active batch changes
   const prevBatchId = useRef(activeBatchId);
@@ -148,10 +153,26 @@ function StudioCanvas() {
     body: Record<string, unknown>,
   ) => {
     const currentBatchId = activeBatchIdRef.current;
-    pendingPromptsRef.current.set(outputNodeId, (body.prompt as string) ?? '');
+    const promptText = (body.prompt as string) ?? '';
+    pendingPromptsRef.current.set(outputNodeId, promptText);
     setNodes(nds => nds.map(n =>
       n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
     ));
+
+    // Helper to handle completed image
+    const handleSuccess = (imageUrl: string, remaining_credits?: number) => {
+      const prompt = pendingPromptsRef.current.get(outputNodeId) ?? '';
+      pendingPromptsRef.current.delete(outputNodeId);
+      setNodes(nds => nds.map(n =>
+        n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl, error: undefined, lastPrompt: prompt } } : n
+      ));
+      addGeneratedImageToBatch(currentBatchId, { id: `img-${Date.now()}`, url: imageUrl, prompt, nodeId: outputNodeId, createdAt: new Date().toISOString() });
+      if (remaining_credits !== undefined) {
+        setEccoCredits(remaining_credits);
+        localStorage.setItem('isupply-ecco-credits', String(remaining_credits));
+      }
+    };
+
     try {
       const res = await fetch('/api/ecco/generate', {
         method: 'POST',
@@ -160,27 +181,10 @@ function StudioCanvas() {
       });
 
       if (res.status === 200) {
-        // Sync mode — result is immediate
-        const data = await res.json() as { imageUrl?: string; error?: string; remaining_credits?: number; cost?: number };
+        const data = await res.json() as { imageUrl?: string; error?: string; remaining_credits?: number };
         if (!data.imageUrl) throw new Error(data.error ?? 'EccoAPI returned no image');
-        const prompt = pendingPromptsRef.current.get(outputNodeId) ?? '';
-        pendingPromptsRef.current.delete(outputNodeId);
-        setNodes(nds => nds.map(n =>
-          n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, error: undefined } } : n
-        ));
-        addGeneratedImageToBatch(currentBatchId, {
-          id: `img-${Date.now()}`,
-          url: data.imageUrl,
-          prompt,
-          nodeId: outputNodeId,
-          createdAt: new Date().toISOString(),
-        });
-        if (data.remaining_credits !== undefined) {
-          setEccoCredits(data.remaining_credits);
-          localStorage.setItem('isupply-ecco-credits', String(data.remaining_credits));
-        }
+        handleSuccess(data.imageUrl, data.remaining_credits);
       } else if (res.status === 202) {
-        // Async mode — poll for result
         const data = await res.json() as { jobId?: string; error?: string };
         if (!data.jobId) throw new Error(data.error ?? 'EccoAPI request failed');
         addJob({ id: data.jobId, nodeId: outputNodeId, batchId: currentBatchId });
@@ -192,10 +196,85 @@ function StudioCanvas() {
       const msg = err instanceof Error ? err.message : 'Generation failed';
       pendingPromptsRef.current.delete(outputNodeId);
       setNodes(nds => nds.map(n =>
-        n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n
+        n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg, lastPrompt: promptText } } : n
       ));
     }
   }, [addJob, addGeneratedImageToBatch]);
+
+  /** SSE streaming variant for Ecco — keeps connection alive during sync Ecco API call */
+  const callEccoGenerateStream = useCallback(async (
+    outputNodeId: string,
+    body: Record<string, unknown>,
+  ) => {
+    const currentBatchId = activeBatchIdRef.current;
+    const promptText = (body.prompt as string) ?? '';
+    pendingPromptsRef.current.set(outputNodeId, promptText);
+    setNodes(nds => nds.map(n =>
+      n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
+    ));
+
+    let lastError = '';
+    for (let retry = 0; retry < 3; retry++) {
+      if (retry > 0) await new Promise(r => setTimeout(r, 1500 * retry));
+      try {
+        const res = await fetch('/api/ecco/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...body, batchId: currentBatchId, useStreaming: true }),
+        });
+        if (!res.ok || !res.body) throw new Error(`Streaming request failed: ${res.status}`);
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer    = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+
+          for (const block of events) {
+            if (!block.trim()) continue;
+            let eventType = 'message';
+            let eventData = '';
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+              if (line.startsWith('data: '))  eventData = line.slice(6).trim();
+            }
+            if (!eventData) continue;
+            const parsed = JSON.parse(eventData) as { imageUrl?: string; error?: string; remaining_credits?: number };
+
+            if (eventType === 'complete' && parsed.imageUrl) {
+              const prompt = pendingPromptsRef.current.get(outputNodeId) ?? '';
+              pendingPromptsRef.current.delete(outputNodeId);
+              setNodes(nds => nds.map(n =>
+                n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, error: undefined, lastPrompt: prompt } } : n
+              ));
+              addGeneratedImageToBatch(currentBatchId, { id: `img-${Date.now()}`, url: parsed.imageUrl, prompt, nodeId: outputNodeId, createdAt: new Date().toISOString() });
+              if (parsed.remaining_credits !== undefined) {
+                setEccoCredits(parsed.remaining_credits);
+                localStorage.setItem('isupply-ecco-credits', String(parsed.remaining_credits));
+              }
+              return;
+            }
+            if (eventType === 'error') throw new Error(parsed.error ?? 'Streaming generation failed');
+          }
+        }
+        return; // stream ended cleanly
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Generation failed';
+        if (retry < 2) continue;
+      }
+      break;
+    }
+
+    pendingPromptsRef.current.delete(outputNodeId);
+    setNodes(nds => nds.map(n =>
+      n.id === outputNodeId ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
+    ));
+  }, [addGeneratedImageToBatch]);
 
   // UI state
   const [selectedNodeId,    setSelectedNodeId]   = useState<string | null>(null);
@@ -205,6 +284,8 @@ function StudioCanvas() {
   const [contextMenu,       setContextMenu]      = useState<{ nodeId: string; x: number; y: number } | null>(null);
   const [isExporting,       setIsExporting]      = useState(false);
   const [leftTab,  setLeftTab]  = useState<'batches' | 'assets' | 'library'>('batches');
+  const [librarySubTab, setLibrarySubTab] = useState<'local' | 'hosted'>('local');
+  const [lockCarouselNodes, setLockCarouselNodes] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [assetsList,       setAssetsList]       = useState<Array<{ id: string; name: string; url: string; tags: string[] }>>([]);
   const [selectedAssetId,  setSelectedAssetId]  = useState<string | null>(null);
@@ -261,8 +342,41 @@ function StudioCanvas() {
   const selectedNode = nodes.find(n => n.id === selectedNodeId) ?? null;
 
   // ── React Flow handlers ──────────────────────────────────────────────────
-  const onNodesChange = useCallback((changes: Parameters<typeof applyNodeChanges>[0]) =>
-    setNodes(nds => applyNodeChanges(changes, nds)), []);
+  const onNodesChange = useCallback((changes: NodeChange[]) => {
+    if (lockCarouselNodes) {
+      // When a carousel output node moves, propagate delta to all sibling output nodes in the same carousel group
+      const posChanges = changes.filter(c => c.type === 'position' && c.dragging && c.position);
+      if (posChanges.length > 0) {
+        setNodes(nds => {
+          let result = applyNodeChanges(changes, nds);
+          for (const change of posChanges) {
+            if (change.type !== 'position' || !change.position) continue;
+            const movedNode = nds.find(n => n.id === change.id);
+            if (!movedNode || movedNode.type !== 'outputNode') continue;
+            // Find which carousel owns this output node
+            const carouselEdge = edgesRef.current.find(e => e.target === change.id);
+            if (!carouselEdge) continue;
+            const carouselId = carouselEdge.source;
+            // Find all sibling output nodes
+            const siblingIds = edgesRef.current
+              .filter(e => e.source === carouselId && e.target !== change.id)
+              .map(e => e.target);
+            if (!siblingIds.length) continue;
+            const dx = change.position.x - movedNode.position.x;
+            const dy = change.position.y - movedNode.position.y;
+            result = result.map(n =>
+              siblingIds.includes(n.id)
+                ? { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+                : n
+            );
+          }
+          return result;
+        });
+        return;
+      }
+    }
+    setNodes(nds => applyNodeChanges(changes, nds));
+  }, [lockCarouselNodes]);
   const onEdgesChange = useCallback((changes: Parameters<typeof applyEdgeChanges>[0]) =>
     setEdges(eds => applyEdgeChanges(changes, eds)), []);
   const onConnect = useCallback((params: Connection) =>
@@ -381,6 +495,35 @@ function StudioCanvas() {
     }
   }, []);
 
+  // Export batch images to Supabase Storage
+  const [isExportingSupabase, setIsExportingSupabase] = useState(false);
+  const handleExportToSupabase = useCallback(async () => {
+    const imageUrls = (activeBatch?.generatedImages ?? []).map(img => img.url).filter(Boolean);
+    if (!imageUrls.length) { alert('No generated images in this batch to export.'); return; }
+    const bucket = prompt('Supabase bucket name:', 'generated-images') ?? 'generated-images';
+    const folder = prompt('Folder path (optional, leave blank for root):', `batch-${activeBatchId ?? Date.now()}`) ?? '';
+    setIsExportingSupabase(true);
+    try {
+      const res  = await fetch('/api/supabase/export', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ imageUrls, bucket, folder }),
+      });
+      const data = await res.json() as { uploaded?: Array<{ localUrl: string; supabaseUrl: string }>; errors?: Array<{ localUrl: string; error: string }>; error?: string };
+      if (!res.ok) { alert(`Export failed: ${data.error ?? 'Unknown error'}`); return; }
+      const uploaded = data.uploaded?.length ?? 0;
+      const failed   = data.errors?.length   ?? 0;
+      // Mark uploaded images as supabase-hosted in library
+      data.uploaded?.forEach(({ localUrl, supabaseUrl }) => updateGeneratedImageSource(localUrl, supabaseUrl));
+      alert(`Exported ${uploaded} image${uploaded !== 1 ? 's' : ''} to Supabase.${failed ? `\n${failed} failed — check the console for details.` : ''}`);
+      if (data.errors?.length) console.error('[supabase/export] errors:', data.errors);
+    } catch (err) {
+      alert(`Export failed: ${err instanceof Error ? err.message : 'Network error'}`);
+    } finally {
+      setIsExportingSupabase(false);
+    }
+  }, [activeBatch, activeBatchId, updateGeneratedImageSource]);
+
   const onCompleteConnect = useCallback((targetNodeId: string) => {
     setConnectingFromId(prev => {
       if (!prev || prev === targetNodeId) return null;
@@ -399,7 +542,7 @@ function StudioCanvas() {
   const callGenerate = useCallback(async (
     outputNodeIds: string[],
     body: Record<string, unknown>,
-  ) => {
+  ): Promise<{ thoughtSignature?: string } | undefined> => {
     setNodes(nds => nds.map(n =>
       outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
     ));
@@ -412,30 +555,41 @@ function StudioCanvas() {
 
     let lastError = '';
     for (const attempt of attempts) {
-      try {
-        const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
-        const data = await res.json() as { imageUrl?: string; error?: string };
-        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-        const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
-        setNodes(nds => nds.map(n => {
-          if (outputNodeIds.includes(n.id))
-            return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
-          if (body.type === 'slide' && n.id === body.nodeId) {
-            type H = { prompt: string; ts: string };
-            const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
-            return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+      for (let retry = 0; retry < 3; retry++) {
+        if (retry > 0) await new Promise(r => setTimeout(r, 1500 * retry));
+        try {
+          const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
+          const data = await res.json() as { imageUrl?: string; error?: string; thoughtSignature?: string };
+          if (!res.ok || !data.imageUrl) {
+            const msg = data.error ?? 'No image returned';
+            // Retry on 500/503
+            if ((res.status === 500 || res.status === 503) && retry < 2) { lastError = msg; continue; }
+            throw new Error(msg);
           }
-          return n;
-        }));
-        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
-        return;
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : 'Generation failed';
+          const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+          setNodes(nds => nds.map(n => {
+            if (outputNodeIds.includes(n.id))
+              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+            if (body.type === 'slide' && n.id === body.nodeId) {
+              type H = { prompt: string; ts: string };
+              const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+              return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+            }
+            return n;
+          }));
+          addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+          return { thoughtSignature: data.thoughtSignature };
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : 'Generation failed';
+          if (retry < 2) continue;
+        }
+        break;
       }
     }
     setNodes(nds => nds.map(n =>
       outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
     ));
+    return undefined;
   }, [addGeneratedImage]);
 
   const callPuddingGenerate = useCallback(async (
@@ -454,25 +608,34 @@ function StudioCanvas() {
 
     let lastError = '';
     for (const attempt of attempts) {
-      try {
-        const res  = await fetch('/api/pudding/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
-        const data = await res.json() as { imageUrl?: string; error?: string };
-        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-        const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
-        setNodes(nds => nds.map(n => {
-          if (outputNodeIds.includes(n.id))
-            return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
-          if (body.type === 'slide' && n.id === body.nodeId) {
-            type H = { prompt: string; ts: string };
-            const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
-            return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+      for (let retry = 0; retry < 3; retry++) {
+        if (retry > 0) await new Promise(r => setTimeout(r, 1500 * retry));
+        try {
+          const res  = await fetch('/api/pudding/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(attempt) });
+          const data = await res.json() as { imageUrl?: string; error?: string };
+          if (!res.ok || !data.imageUrl) {
+            const msg = data.error ?? 'No image returned';
+            if ((res.status === 500 || res.status === 503) && retry < 2) { lastError = msg; continue; }
+            throw new Error(msg);
           }
-          return n;
-        }));
-        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
-        return;
-      } catch (err) {
-        lastError = err instanceof Error ? err.message : 'Generation failed';
+          const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+          setNodes(nds => nds.map(n => {
+            if (outputNodeIds.includes(n.id))
+              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+            if (body.type === 'slide' && n.id === body.nodeId) {
+              type H = { prompt: string; ts: string };
+              const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+              return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+            }
+            return n;
+          }));
+          addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+          return;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : 'Generation failed';
+          if (retry < 2) continue;
+        }
+        break;
       }
     }
     setNodes(nds => nds.map(n =>
@@ -562,6 +725,81 @@ function StudioCanvas() {
     ));
   }, [addGeneratedImage]);
 
+  /** SSE streaming variant for the Gemini direct route — mirrors callPuddingGenerateStream */
+  const callGeminiGenerateStream = useCallback(async (
+    outputNodeIds: string[],
+    body: Record<string, unknown>,
+  ): Promise<{ thoughtSignature?: string } | undefined> => {
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n
+    ));
+    const promptText = body.prompt as string;
+    const origSettings = (body.settings ?? {}) as Record<string, unknown>;
+    const hadSearch = Boolean(origSettings.useGoogleSearch) || Boolean(origSettings.useImageSearch);
+    const attempts: Record<string, unknown>[] = hadSearch
+      ? [body, { ...body, settings: { ...origSettings, useGoogleSearch: false, useImageSearch: false } }]
+      : [body];
+
+    let lastError = '';
+    for (const attempt of attempts) {
+      try {
+        const res = await fetch('/api/generate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...attempt, useStreaming: true }),
+        });
+        if (!res.ok || !res.body) throw new Error(`Streaming request failed: ${res.status}`);
+
+        const reader  = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer    = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() ?? '';
+          for (const block of events) {
+            if (!block.trim()) continue;
+            let eventType = 'message';
+            let eventData = '';
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+              if (line.startsWith('data: '))  eventData = line.slice(6).trim();
+            }
+            if (!eventData) continue;
+            const parsed = JSON.parse(eventData) as { imageUrl?: string; error?: string; thoughtSignature?: string };
+            if (eventType === 'complete' && parsed.imageUrl) {
+              const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
+              setNodes(nds => nds.map(n => {
+                if (outputNodeIds.includes(n.id))
+                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
+                if (attempt.type === 'slide' && n.id === attempt.nodeId) {
+                  type H = { prompt: string; ts: string };
+                  const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
+                  return { ...n, data: { ...n.data, promptHistory: [historyEntry, ...prev].slice(0, 10) } };
+                }
+                return n;
+              }));
+              addGeneratedImage({ id: `img-${Date.now()}`, url: parsed.imageUrl, prompt: promptText, nodeId: outputNodeIds[0], createdAt: new Date().toISOString() });
+              return { thoughtSignature: parsed.thoughtSignature };
+            }
+            if (eventType === 'error') {
+              throw new Error(parsed.error ?? 'Streaming generation failed');
+            }
+          }
+        }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : 'Generation failed';
+      }
+    }
+    setNodes(nds => nds.map(n =>
+      outputNodeIds.includes(n.id) ? { ...n, data: { ...n.data, isLoading: false, error: lastError, lastPrompt: promptText } } : n
+    ));
+    return undefined;
+  }, [addGeneratedImage]);
+
   /** Collect URLs of UploadNodes connected as inputs to a given node */
   const getConnectedUploadUrls = useCallback((nodeId: string): string[] =>
     edgesRef.current
@@ -599,86 +837,109 @@ function StudioCanvas() {
 
     const referenceUrls = getConnectedUploadUrls(promptNodeId);
 
-    if (activeProviderRef.current === 'ecco') {
+    const effectiveProvider = settings?.providerOverride ?? activeProviderRef.current;
+    if (effectiveProvider === 'ecco') {
       const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
       const aspectRatio = settings?.aspectRatio ?? '4:5';
       const imageSize = settings?.imageSize ?? '1K';
+      const eccoFn = settings?.useStreaming ? callEccoGenerateStream : callEccoGenerate;
       await Promise.all(allOutIds.map(outId =>
-        callEccoGenerate(outId, {
+        eccoFn(outId, {
           prompt, nodeId: promptNodeId, model, aspectRatio, imageSize,
           useGoogleSearch:  settings?.useGoogleSearch  ?? false,
+          useImageSearch:   settings?.useImageSearch   ?? false,
           temperature:      settings?.temperature      ?? 1.0,
           includeThoughts:  settings?.includeThoughts  ?? true,
           mediaResolution:  settings?.mediaResolution  ?? 'media_resolution_high',
           safetyThreshold:  settings?.safetyThreshold  ?? 'BLOCK_MEDIUM_AND_ABOVE',
-          useAsync:         settings?.useAsync         ?? false,
+          useAsync:         settings?.useStreaming ? false : (settings?.useAsync ?? false),
           referenceUrls,
         })
       ));
-    } else if (activeProviderRef.current === 'pudding') {
+    } else if (effectiveProvider === 'pudding') {
       const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
       await Promise.all(allOutIds.map(outId =>
         puddingFn([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
       ));
     } else {
+      const geminiFn = settings?.useStreaming ? callGeminiGenerateStream : callGenerate;
       await Promise.all(allOutIds.map(outId =>
-        callGenerate([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
+        geminiFn([outId], { prompt, nodeId: promptNodeId, type: 'slide', settings: settings ?? {}, referenceUrls })
       ));
     }
-  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callGeminiGenerateStream, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   const onRegenerate = useCallback(async (outputNodeId: string, lastPrompt: string, settings?: NodeSettings) => {
     const referenceUrls = getConnectedUploadUrls(outputNodeId);
-    if (activeProviderRef.current === 'ecco') {
+    const effectiveProvider = settings?.providerOverride ?? activeProviderRef.current;
+    if (effectiveProvider === 'ecco') {
       const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
-      await callEccoGenerate(outputNodeId, {
+      const eccoFn = settings?.useStreaming ? callEccoGenerateStream : callEccoGenerate;
+      await eccoFn(outputNodeId, {
         prompt: lastPrompt, nodeId: outputNodeId, model,
         aspectRatio:      settings?.aspectRatio     ?? '4:5',
         imageSize:        settings?.imageSize       ?? '1K',
         useGoogleSearch:  settings?.useGoogleSearch ?? false,
+        useImageSearch:   settings?.useImageSearch  ?? false,
         temperature:      settings?.temperature     ?? 1.0,
         includeThoughts:  settings?.includeThoughts ?? true,
         mediaResolution:  settings?.mediaResolution ?? 'media_resolution_high',
         safetyThreshold:  settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
-        useAsync:         settings?.useAsync        ?? false,
+        useAsync:         settings?.useStreaming ? false : (settings?.useAsync ?? false),
         referenceUrls,
       });
-    } else if (activeProviderRef.current === 'pudding') {
+    } else if (effectiveProvider === 'pudding') {
       const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
       await puddingFn([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
     } else {
-      await callGenerate([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
+      const geminiFn = settings?.useStreaming ? callGeminiGenerateStream : callGenerate;
+      await geminiFn([outputNodeId], { prompt: lastPrompt, nodeId: outputNodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
     }
-  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callGeminiGenerateStream, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   // Sequential generation for carousel nodes (avoids rate-limit errors)
+  // thoughtSignature is threaded slide-to-slide (Gemini only) to keep character/product
+  // identity consistent across the entire carousel.
   const onGenerateCarousel = useCallback(async (nodeId: string, slides: CarouselSlide[], settings?: NodeSettings) => {
     const pending = slides.filter(s => s.prompt.trim() && s.outputNodeId);
-    // Collect reference URLs from UploadNodes connected to this carousel node (fixes the bug where ref images were dropped)
+    // Collect reference URLs from UploadNodes connected to this carousel node
     const referenceUrls = getConnectedUploadUrls(nodeId);
+    let thoughtSignature: string | undefined;
     for (const slide of pending) {
-      if (activeProviderRef.current === 'ecco') {
+      const effectiveProvider = settings?.providerOverride ?? activeProviderRef.current;
+      if (effectiveProvider === 'ecco') {
         const model = (settings?.eccoModel as string | undefined) ?? 'nanobanana31';
-        await callEccoGenerate(slide.outputNodeId, {
+        const eccoFn = settings?.useStreaming ? callEccoGenerateStream : callEccoGenerate;
+        await eccoFn(slide.outputNodeId, {
           prompt: slide.prompt.trim(), nodeId, model,
           aspectRatio:      settings?.aspectRatio     ?? '4:5',
           imageSize:        settings?.imageSize       ?? '1K',
           useGoogleSearch:  settings?.useGoogleSearch ?? false,
+          useImageSearch:   settings?.useImageSearch  ?? false,
           temperature:      settings?.temperature     ?? 1.0,
           includeThoughts:  settings?.includeThoughts ?? true,
           mediaResolution:  settings?.mediaResolution ?? 'media_resolution_high',
           safetyThreshold:  settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
-          useAsync:         settings?.useAsync        ?? false,
+          useAsync:         settings?.useStreaming ? false : (settings?.useAsync ?? false),
           referenceUrls,
         });
-      } else if (activeProviderRef.current === 'pudding') {
+      } else if (effectiveProvider === 'pudding') {
         const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
         await puddingFn([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
       } else {
-        await callGenerate([slide.outputNodeId], { prompt: slide.prompt.trim(), nodeId, type: 'slide', settings: settings ?? {}, referenceUrls });
+        // Gemini direct: pass thoughtSignature from the previous slide so the model
+        // maintains its internal character/product anchor across slides.
+        const geminiFn = settings?.useStreaming ? callGeminiGenerateStream : callGenerate;
+        const result = await geminiFn([slide.outputNodeId], {
+          prompt: slide.prompt.trim(), nodeId, type: 'slide',
+          settings: settings ?? {},
+          referenceUrls,
+          ...(thoughtSignature ? { thoughtSignature } : {}),
+        });
+        thoughtSignature = result?.thoughtSignature;
       }
     }
-  }, [callGenerate, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
+  }, [callGenerate, callGeminiGenerateStream, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
 
   const onUpdateData = useCallback((nodeId: string, data: Record<string, unknown>) => {
     setNodes(nds => nds.map(n =>
@@ -688,63 +949,139 @@ function StudioCanvas() {
 
   const onCreateModel = useCallback(async (nodeId: string, description: string, settings: NodeSettings) => {
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n));
+
+    // Shared model count + prompt builder
+    const lower = description.toLowerCase();
+    let modelCount: 1 | 2 | 3 = 1;
+    if (/\b(three models?|3 models?|three people|3 people|3 persons?|three persons?)\b/.test(lower)) modelCount = 3;
+    else if (/\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower)) modelCount = 2;
+
+    const aspectRatio = modelCount >= 2 ? '21:9' : '16:9';
+    const style  = (settings?.style      as string | undefined) ?? 'realistic commercial photography';
+    const light  = (settings?.lighting   as string | undefined) ?? 'professional studio lighting';
+    const bg     = (settings?.background as string | undefined) ?? 'pure white';
+
+    const compositePrompt = modelCount === 3
+      ? `Create a professional composite image with SIX panels in a single ultra-wide 21:9 frame showing THREE models, each from two angles. ` +
+        `Panels layout (left to right): [Model 1 Front] [Model 1 Back] [Model 2 Front] [Model 2 Back] [Model 3 Front] [Model 3 Back]. ` +
+        `Models: ${description}. Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+        `Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`
+      : modelCount === 2
+      ? `Create a professional composite image with FOUR panels in a single ultra-wide 21:9 frame showing TWO models, each from two angles. ` +
+        `Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view]. ` +
+        `Models: ${description}. Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+        `Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`
+      : `Create a professional composite image with FOUR panels in a single 16:9 frame showing the same model from four angles. ` +
+        `Panels layout (left to right): [Front view] [3/4 angle] [Side profile] [Rear view]. ` +
+        `Model: ${description}. Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
+        `All panels must show the same person with consistent appearance. Ultra high quality, sharp details, professional fashion photography.`;
+
     if (activeProviderRef.current === 'ecco') {
-      const style  = (settings?.style      as string | undefined) ?? 'realistic commercial photography';
-      const light  = (settings?.lighting   as string | undefined) ?? 'professional studio lighting';
-      const bg     = (settings?.background as string | undefined) ?? 'pure white';
-      const lower  = description.toLowerCase();
-      const isTwoModels = /\b(two models?|2 models?|both models?|model 1\b[\s\S]{0,80}\bmodel 2\b|(male|man|boy)[\s\S]{0,80}(female|woman|girl)|(female|woman|girl)[\s\S]{0,80}(male|man|boy)|first model\b[\s\S]{0,80}\bsecond model\b)\b/.test(lower);
-      const compositePrompt = isTwoModels
-        ? `Create a professional composite image with FOUR panels in a single 16:9 frame showing TWO models, each from two angles. ` +
-          `Panels layout (left to right): [Model 1 Front view] [Model 1 Back view] [Model 2 Front view] [Model 2 Back view]. ` +
-          `Models: ${description}. ` +
-          `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
-          `Each model must be visually consistent across their two panels. Ultra high quality, sharp details, professional fashion photography.`
-        : `Create a professional composite image with FOUR panels in a single 16:9 frame showing the same model from four angles. ` +
-          `Panels layout (left to right): [Front view] [3/4 angle] [Side profile] [Rear view]. ` +
-          `Model: ${description}. ` +
-          `Style: ${style}. Lighting: ${light}. Background: ${bg}. ` +
-          `All panels must show the same person with consistent appearance. Ultra high quality, sharp details, professional fashion photography.`;
       const referenceUrls = getConnectedUploadUrls(nodeId);
-      await callEccoGenerate(nodeId, {
+      const eccoFn = settings?.useStreaming ? callEccoGenerateStream : callEccoGenerate;
+      await eccoFn(nodeId, {
         prompt: compositePrompt,
         nodeId,
         model:           (settings?.eccoModel as string | undefined) ?? 'nanobananapro',
-        aspectRatio:     '16:9',
+        aspectRatio,
         imageSize:       settings?.imageSize       ?? '1K',
         useGoogleSearch: settings?.useGoogleSearch ?? false,
+        useImageSearch:  settings?.useImageSearch  ?? false,
         temperature:     settings?.temperature     ?? 1.0,
         includeThoughts: settings?.includeThoughts ?? true,
         mediaResolution: settings?.mediaResolution ?? 'media_resolution_high',
         safetyThreshold: settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
-        useAsync:        settings?.useAsync        ?? false,
+        useAsync:        settings?.useStreaming ? false : (settings?.useAsync ?? false),
         referenceUrls,
       });
     } else if (activeProviderRef.current === 'pudding') {
       const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
       await puddingFn([nodeId], { prompt: description, nodeId, type: 'model-creation', settings });
     } else {
-      try {
-        const res  = await fetch('/api/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: description, nodeId, type: 'model-creation', settings }) });
-        const data = await res.json() as { imageUrl?: string; error?: string };
-        if (!res.ok || !data.imageUrl) throw new Error(data.error ?? 'No image returned');
-        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, error: undefined } } : n));
-        addGeneratedImage({ id: `img-${Date.now()}`, url: data.imageUrl, prompt: description, nodeId, createdAt: new Date().toISOString() });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Generation failed';
-        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: msg } } : n));
+      // Gemini — use retry loop
+      let lastError = '';
+      for (let retry = 0; retry < 3; retry++) {
+        if (retry > 0) await new Promise(r => setTimeout(r, 1500 * retry));
+        try {
+          const fn = settings?.useStreaming ? callGeminiGenerateStream : callGenerate;
+          const result = await fn([nodeId], { prompt: description, nodeId, type: 'model-creation', settings });
+          if (result !== undefined || !settings?.useStreaming) return;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : 'Generation failed';
+          if (retry < 2) continue;
+        }
+        break;
+      }
+      if (lastError) {
+        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: lastError } } : n));
       }
     }
-  }, [addGeneratedImage, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, getConnectedUploadUrls]);
+  }, [addGeneratedImage, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, callEccoGenerateStream, callGenerate, callGeminiGenerateStream, getConnectedUploadUrls]);
+
+  const onAddCarouselSlide = useCallback((carouselNodeId: string) => {
+    const outCount = nodesRef.current.filter(n => n.type === 'outputNode').length;
+    const carouselNode = nodesRef.current.find(n => n.id === carouselNodeId);
+    if (!carouselNode) return;
+
+    // Place new output node below existing linked output nodes
+    const linkedOutIds = edgesRef.current.filter(e => e.source === carouselNodeId).map(e => e.target);
+    const linkedOuts = nodesRef.current.filter(n => linkedOutIds.includes(n.id));
+    const maxY = linkedOuts.length
+      ? Math.max(...linkedOuts.map(n => n.position.y))
+      : carouselNode.position.y;
+    const newOutX = linkedOuts.length ? linkedOuts[0].position.x : (carouselNode.position.x + 460);
+
+    const newOutId = `output-${Date.now()}`;
+    const newSlide: CarouselSlide = { id: `cs-${Date.now()}`, prompt: '', outputNodeId: newOutId };
+    const newOutNode: Node = {
+      id: newOutId, type: 'outputNode',
+      position: { x: newOutX, y: maxY + 320 },
+      data: { label: `Output ${outCount + 1}`, slideNumber: outCount + 1, isLoading: false, imageUrl: '' },
+    };
+
+    setNodes(nds => {
+      // Append slide to carousel node data
+      const updated = nds.map(n => {
+        if (n.id !== carouselNodeId) return n;
+        const slides = [...((n.data as { slides?: CarouselSlide[] }).slides ?? []), newSlide];
+        return { ...n, data: { ...n.data, slides } };
+      });
+      return [...updated, newOutNode];
+    });
+    setEdges(eds => [...eds, mkEdge(`e-${carouselNodeId}-${newOutId}`, carouselNodeId, newOutId)]);
+  }, []);
+
+  const onRemoveCarouselSlide = useCallback((carouselNodeId: string, slideIndex: number) => {
+    const carouselNode = nodesRef.current.find(n => n.id === carouselNodeId);
+    if (!carouselNode) return;
+    const slides: CarouselSlide[] = (carouselNode.data as { slides?: CarouselSlide[] }).slides ?? [];
+    if (slides.length <= 1) return; // keep at least 1
+    const removedSlide = slides[slideIndex];
+    if (!removedSlide) return;
+
+    setNodes(nds => {
+      const updated = nds
+        .filter(n => n.id !== removedSlide.outputNodeId) // remove output node
+        .map(n => {
+          if (n.id !== carouselNodeId) return n;
+          const newSlides = slides.filter((_, i) => i !== slideIndex);
+          return { ...n, data: { ...n.data, slides: newSlides } };
+        });
+      return updated;
+    });
+    setEdges(eds => eds.filter(e => !(e.source === carouselNodeId && e.target === removedSlide.outputNodeId)));
+  }, []);
 
   const studioCtx = useMemo(() => ({
     onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
     onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
-    onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect,
+    onDeleteNode, onAddCarouselSlide, onRemoveCarouselSlide,
+    connectingFromId, onStartConnect, onCompleteConnect,
     activeProvider,
   }), [onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
       onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
-      onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, activeProvider]);
+      onDeleteNode, onAddCarouselSlide, onRemoveCarouselSlide,
+      connectingFromId, onStartConnect, onCompleteConnect, activeProvider]);
 
   // ── Node helpers ─────────────────────────────────────────────────────────
   const nextY = (nds: Node[], type: string, h: number) => {
@@ -771,10 +1108,18 @@ function StudioCanvas() {
     const baseY  = nextY(nodesRef.current, 'carouselNode', 400);
     const outCount = nodesRef.current.filter(n => n.type === 'outputNode').length;
 
+    // Start output nodes below the last existing output node to avoid overlap
+    const existingOutNodes = nodesRef.current.filter(n => n.type === 'outputNode');
+    const existingMaxY = existingOutNodes.length
+      ? Math.max(...existingOutNodes.map(n => n.position.y))
+      : baseY - 320;
+    const outStartY = Math.max(baseY, existingMaxY + 340);
+    const outX = 900;
+
     const outputNodes: Node[] = Array.from({ length: count }, (_, i) => ({
       id: `output-${Date.now()}-${i}`,
       type: 'outputNode',
-      position: { x: 900, y: baseY + i * 310 },
+      position: { x: outX, y: outStartY + i * 320 },
       data: { label: `Output ${outCount + i + 1}`, slideNumber: outCount + i + 1, isLoading: false, imageUrl: '' },
     }));
 
@@ -903,18 +1248,34 @@ function StudioCanvas() {
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
           {/* ── Left panel ── */}
-          <aside style={{ width: 230, flexShrink: 0, background: '#111113', borderRight: '1px solid #2A2A35', display: 'flex', flexDirection: 'column' }}>
+          <aside style={{ width: leftSidebarOpen ? 230 : 36, flexShrink: 0, background: '#111113', borderRight: '1px solid #2A2A35', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease', overflow: 'hidden' }}>
+            {/* Collapse toggle */}
+            <button
+              onClick={() => setLeftSidebarOpen(v => !v)}
+              title={leftSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+              style={{
+                flexShrink: 0, height: 36, border: 'none', borderBottom: '1px solid #2A2A35',
+                background: '#111113', color: '#55556A', cursor: 'pointer', fontSize: 14,
+                display: 'flex', alignItems: 'center', justifyContent: leftSidebarOpen ? 'flex-end' : 'center',
+                paddingRight: leftSidebarOpen ? 10 : 0,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#F1F0F5'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#55556A'; }}
+            >
+              {leftSidebarOpen ? '‹' : '›'}
+            </button>
+
             {/* Tabs */}
-            <div style={{ display: 'flex', borderBottom: '1px solid #2A2A35', flexShrink: 0 }}>
+            {leftSidebarOpen && <div style={{ display: 'flex', borderBottom: '1px solid #2A2A35', flexShrink: 0 }}>
               {(['batches', 'assets', 'library'] as const).map(tab => (
                 <button key={tab} onClick={() => setLeftTab(tab)}
                   style={{ flex: 1, padding: '9px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', textTransform: 'capitalize', background: leftTab === tab ? '#1A1A1F' : 'transparent', color: leftTab === tab ? '#F1F0F5' : '#55556A', borderBottom: leftTab === tab ? '2px solid #7C3AED' : '2px solid transparent' }}>
                   {tab === 'library' ? 'Library' : tab === 'assets' ? 'Assets' : 'Batches'}
                 </button>
               ))}
-            </div>
+            </div>}
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+            {leftSidebarOpen && <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
 
               {/* ── Batches tab ── */}
               {leftTab === 'batches' && (
@@ -1028,20 +1389,42 @@ function StudioCanvas() {
 
               {/* ── Image Library tab ── */}
               {leftTab === 'library' && (
-                libraryImages.length === 0
-                  ? <p style={{ fontSize: 11, color: '#55556A', lineHeight: 1.6 }}>Generated images appear here. Click ⊕ on any output node to save.</p>
-                  : libraryImages.map(img => (
+                <>
+                  {/* Sub-tabs: Local / Hosted */}
+                  <div style={{ display: 'flex', marginBottom: 10, borderBottom: '1px solid #2A2A35' }}>
+                    {(['local', 'hosted'] as const).map(sub => (
+                      <button key={sub} onClick={() => setLibrarySubTab(sub)}
+                        style={{ flex: 1, padding: '6px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', background: 'transparent', color: librarySubTab === sub ? '#F1F0F5' : '#55556A', borderBottom: librarySubTab === sub ? '2px solid #0D9488' : '2px solid transparent', textTransform: 'capitalize' }}>
+                        {sub === 'hosted' ? '☁ Hosted' : '⬡ Local'}
+                      </button>
+                    ))}
+                  </div>
+                  {(() => {
+                    const filtered = libraryImages.filter(img =>
+                      librarySubTab === 'hosted' ? img.source === 'supabase' : img.source !== 'supabase'
+                    );
+                    if (filtered.length === 0) return (
+                      <p style={{ fontSize: 11, color: '#55556A', lineHeight: 1.6 }}>
+                        {librarySubTab === 'hosted'
+                          ? 'No hosted images yet. Use ☁ Supabase to upload generated images.'
+                          : 'Generated images appear here. Click ⊕ on any output node to save.'}
+                      </p>
+                    );
+                    return filtered.map(img => (
                       <div key={img.id}
                         onClick={() => { setSelectedLibImgId(img.id); setSelectedNodeId(null); setSelectedNodeType(null); setSelectedAssetId(null); }}
                         style={{ marginBottom: 8, cursor: 'pointer', borderRadius: 8, border: `1px solid ${selectedLibImgId === img.id ? '#7C3AED88' : 'transparent'}`, padding: 4 }}>
                         <div style={{ position: 'relative' }}>
-                          <img src={img.url} alt="generated" style={{ width: '100%', borderRadius: 5, display: 'block' }} />
+                          <img src={librarySubTab === 'hosted' && img.supabaseUrl ? img.supabaseUrl : img.url} alt="generated" style={{ width: '100%', borderRadius: 5, display: 'block' }} />
+                          {librarySubTab === 'hosted' && (
+                            <span style={{ position: 'absolute', top: 4, right: 4, fontSize: 8, padding: '2px 5px', borderRadius: 10, background: '#0D948888', color: '#fff', fontWeight: 700 }}>☁</span>
+                          )}
                           <div
                             onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
                             onMouseLeave={e => (e.currentTarget.style.opacity = '0')}
                             style={{ position: 'absolute', inset: 0, borderRadius: 5, background: 'rgba(10,10,11,0.82)', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'opacity 0.15s' }}
                           >
-                            <button onClick={e => { e.stopPropagation(); setModalImageUrl(img.url); }}
+                            <button onClick={e => { e.stopPropagation(); setModalImageUrl(librarySubTab === 'hosted' && img.supabaseUrl ? img.supabaseUrl : img.url); }}
                               style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: 'none', background: '#7C3AED', color: '#fff', cursor: 'pointer' }}>
                               Open
                             </button>
@@ -1058,9 +1441,11 @@ function StudioCanvas() {
                         <p style={{ fontSize: 9, color: '#55556A', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.prompt.slice(0, 55)}{img.prompt.length > 55 ? '…' : ''}</p>
                         <p style={{ fontSize: 9, color: '#55556A' }}>{new Date(img.createdAt).toLocaleString()}</p>
                       </div>
-                    ))
+                    ));
+                  })()}
+                </>
               )}
-            </div>
+            </div>}
           </aside>
 
           {/* ── Canvas area ── */}
@@ -1071,11 +1456,26 @@ function StudioCanvas() {
               <TB onClick={addPromptNode}>+ Image Prompt</TB>
               <Div />
               <TB onClick={addCarouselSlide} accent>+ Carousel Slide</TB>
+              <button
+                onClick={() => setLockCarouselNodes(v => !v)}
+                title={lockCarouselNodes ? 'Unlock carousel nodes (move independently)' : 'Lock carousel nodes (move together)'}
+                style={{
+                  padding: '4px 9px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: `1px solid ${lockCarouselNodes ? '#F59E0B44' : '#2A2A35'}`,
+                  background: lockCarouselNodes ? '#F59E0B22' : '#111113', color: lockCarouselNodes ? '#F59E0B' : '#55556A',
+                  cursor: 'pointer', whiteSpace: 'nowrap',
+                }}>
+                {lockCarouselNodes ? '⛓ Locked' : '⛓ Lock Slides'}
+              </button>
               <Div />
               <TB onClick={addModelNode} coral>+ Model Creation</TB>
               <Div />
               <TB onClick={handleExportCanvas}>{isExporting ? 'Exporting…' : '↓ Canvas PNG'}</TB>
               {libraryImages.length > 0 && <TB onClick={handleDownloadAll}>↓ Library ZIP</TB>}
+              {(activeBatch?.generatedImages?.length ?? 0) > 0 && (
+                <TB onClick={handleExportToSupabase} title="Upload all generated images in this batch to Supabase Storage">
+                  {isExportingSupabase ? 'Uploading…' : '☁ Supabase'}
+                </TB>
+              )}
               {activeBatch?.batchType === 'automated' && (
                 <span style={{ fontSize: 9, color: '#7C3AED', fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: '#7C3AED11', border: '1px solid #7C3AED44', marginLeft: 4 }}>
                   ⚡ Automated
@@ -1083,21 +1483,23 @@ function StudioCanvas() {
               )}
             </div>
 
-            {/* React Flow canvas */}
+            {/* React Flow canvas — wrapped in ErrorBoundary so a broken node doesn't crash the studio */}
             <div style={{ flex: 1, width: '100%' }}>
-              <ReactFlow
-                nodes={nodes} edges={edges}
-                onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
-                onPaneClick={onPaneClick} onNodeContextMenu={onNodeContextMenu}
-                nodeTypes={nodeTypes} edgeTypes={edgeTypes}
-                fitView fitViewOptions={{ padding: 0.15 }}
-                connectionRadius={60}
-                attributionPosition="bottom-right"
-              >
-                <Background variant={BackgroundVariant.Dots} color="#2A2A35" gap={24} size={1} />
-                <Controls style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
-                <MiniMap nodeColor={() => '#7C3AED'} maskColor="rgba(10,10,11,0.75)" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
-              </ReactFlow>
+              <ErrorBoundary>
+                <ReactFlow
+                  nodes={nodes} edges={edges}
+                  onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onConnect={onConnect}
+                  onPaneClick={onPaneClick} onNodeContextMenu={onNodeContextMenu}
+                  nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+                  fitView fitViewOptions={{ padding: 0.15 }}
+                  connectionRadius={60}
+                  attributionPosition="bottom-right"
+                >
+                  <Background variant={BackgroundVariant.Dots} color="#2A2A35" gap={24} size={1} />
+                  <Controls style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
+                  <MiniMap nodeColor={() => '#7C3AED'} maskColor="rgba(10,10,11,0.75)" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
+                </ReactFlow>
+              </ErrorBoundary>
             </div>
 
             {/* Carousel count picker modal */}
@@ -1345,6 +1747,19 @@ function StudioCanvas() {
                       <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
                       <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
                     </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                    </Sec>
+                    <Sec label={`Top-P — ${(settingsOf.topP ?? 1).toFixed(2)}`}>
+                      <SliderRow value={settingsOf.topP ?? 1} min={0} max={1} step={0.01} onChange={v => setSetting('topP', v)} />
+                    </Sec>
+                    <Sec label="Streaming Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                      </label>
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get timeout errors — keeps the connection alive during long generations</p>
+                    </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                         <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
@@ -1365,6 +1780,15 @@ function StudioCanvas() {
                 <Sec label="Generation Count">
                   <Chips opts={['1', '2', '3', '4']} value={String(settingsOf.count ?? 1)} onChange={v => setSetting('count', Number(v))} cols={4} />
                   <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Creates extra output nodes as needed</p>
+                </Sec>
+                <Sec label="Provider Override">
+                  <Chips
+                    opts={['Inherit', 'Gemini', 'EccoAPI', 'Pudding']}
+                    value={settingsOf.providerOverride === 'gemini' ? 'Gemini' : settingsOf.providerOverride === 'ecco' ? 'EccoAPI' : settingsOf.providerOverride === 'pudding' ? 'Pudding' : 'Inherit'}
+                    onChange={v => setSetting('providerOverride', v === 'Inherit' ? undefined : v === 'EccoAPI' ? 'ecco' : v.toLowerCase() as 'gemini' | 'pudding')}
+                    cols={2}
+                  />
+                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Force this node to use a specific provider — overrides the global toolbar toggle</p>
                 </Sec>
                 {/* Prompt history */}
                 {(() => {
@@ -1503,8 +1927,21 @@ function StudioCanvas() {
                   ) : (
                     <>
                       <Sec label="Model">
-                        <Chips opts={['Flash', 'Flash 2.5']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
+                        <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
                         <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                      </Sec>
+                      <Sec label="Image Size">
+                        <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                      </Sec>
+                      <Sec label={`Top-P — ${(settingsOf.topP ?? 1).toFixed(2)}`}>
+                        <SliderRow value={settingsOf.topP ?? 1} min={0} max={1} step={0.01} onChange={v => setSetting('topP', v)} />
+                      </Sec>
+                      <Sec label="Streaming Mode">
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                          <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
+                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        </label>
+                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get timeout errors on slow carousel generations</p>
                       </Sec>
                       <Sec label="Google Search Grounding">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
@@ -1523,6 +1960,15 @@ function StudioCanvas() {
                       )}
                     </>
                   )}
+                  <Sec label="Provider Override">
+                    <Chips
+                      opts={['Inherit', 'Gemini', 'EccoAPI', 'Pudding']}
+                      value={settingsOf.providerOverride === 'gemini' ? 'Gemini' : settingsOf.providerOverride === 'ecco' ? 'EccoAPI' : settingsOf.providerOverride === 'pudding' ? 'Pudding' : 'Inherit'}
+                      onChange={v => setSetting('providerOverride', v === 'Inherit' ? undefined : v === 'EccoAPI' ? 'ecco' : v.toLowerCase() as 'gemini' | 'pudding')}
+                      cols={2}
+                    />
+                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Force this carousel to use a specific provider — overrides the global toolbar toggle</p>
+                  </Sec>
                 </>
               );
             })()}
@@ -1646,7 +2092,32 @@ function StudioCanvas() {
                       </Sec>
                     )}
                   </>
-                ) : null}
+                ) : (
+                  <>
+                    <Sec label="Model">
+                      <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
+                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                    </Sec>
+                    <Sec label="Image Size">
+                      <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
+                    </Sec>
+                    <Sec label={`Top-P — ${(settingsOf.topP ?? 1).toFixed(2)}`}>
+                      <SliderRow value={settingsOf.topP ?? 1} min={0} max={1} step={0.01} onChange={v => setSetting('topP', v)} />
+                    </Sec>
+                    <Sec label="Streaming Mode">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                      </label>
+                    </Sec>
+                    <Sec label="Google Search Grounding">
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
+                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                      </label>
+                    </Sec>
+                  </>
+                )}
                 <Sec label="Style">
                   <Chips opts={['Realistic', 'Editorial', 'Commercial', 'Artistic']} value={settingsOf.style ?? 'Realistic'} onChange={v => setSetting('style', v)} cols={2} />
                 </Sec>

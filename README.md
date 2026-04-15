@@ -399,28 +399,3 @@ xattr -cr /Applications/iSupply\ AI\ Studio.app
 
 ### Windows — installer blocked by SmartScreen
 Click **More info → Run anyway**. The app is unsigned (no code-signing certificate). To suppress this permanently, a code-signing certificate is required.
-
----
-
-## Known Issues & Suggestions
-
-### Bugs
-
-| # | File | Issue |
-|---|------|-------|
-| 1 | `lib/tagMatcher.ts:21` | Reads `process.cwd()/data/assets.json` — ignores `USER_DATA_DIR`. In the packaged Electron app, tag-matching always returns empty because the data file is in `userData/assets.json`, not the app install dir. **Fix:** replace the hardcoded path with `getAssetsDbPath()` from `lib/storage.ts`. |
-| 2 | `package.json` | `sharp` is used in all three generation routes but is not listed as a dependency. It works because it was installed manually, but a fresh `npm install` on a CI machine or new clone may not include it. **Fix:** run `npm install sharp` and commit the updated `package.json`. |
-| 3 | `app/lib/eccoJobStore.ts` | The async job store is an in-memory `Map`. All pending EccoAPI jobs are lost if the Next.js server restarts. Not an issue for typical desktop use, but would be a silent failure in a hosted/web deployment. **Fix:** persist to a file or use a lightweight database for web deployments. |
-| 4 | `app/page.tsx` | Auto-save runs every 3 s. If the user switches batches during the interval, the save writes the new batch's nodes to the old batch ID for up to 3 s. **Fix:** flush save synchronously on batch switch before calling `setActiveBatchId`. |
-
-### Missing Features / Suggestions
-
-| # | Suggestion | Why |
-|---|-----------|-----|
-| 1 | **`thoughtSignature` reuse** | The `ECCOAPI-FEATURE-REQUEST.md` describes using `thoughtSignature` to keep character/product identity consistent across multi-slide generations. It is not implemented. Adding it to the carousel generation loop would significantly improve slide-to-slide consistency. |
-| 2 | **Error boundary** | There is no React error boundary wrapping the canvas. An uncaught error in any node component (e.g. a malformed image URL) will crash the entire studio. A simple `<ErrorBoundary>` wrapper would isolate failures to individual nodes. |
-| 3 | **Document the 14-image reference limit** | `app/api/generate/route.ts:285` — `slice(0, 14)`. This limit is not surfaced in the UI or README. Users with more than 14 tagged assets won't know why extra references are ignored. |
-| 4 | **Streaming for Gemini direct** | Only PuddingAPI supports SSE streaming. Direct Gemini and EccoAPI sync calls can hit Next.js/Vercel/Cloudflare response timeouts on slow generations. Adding streaming to the Gemini route would improve reliability. |
-| 5 | **Per-node provider override** | Currently the provider is global. Allowing per-node provider selection would let users mix Gemini (quality) and EccoAPI (cost) in the same batch. |
-| 6 | **Export to Supabase / cloud storage** | The app saves all images locally. For team use, a Supabase storage export option would allow sharing batches. The Supabase client is already a dependency. |
-| 7 | **Carousel slide re-ordering** | Slides in the carousel node are generated in fixed order. Drag-to-reorder would be a useful UX improvement. |

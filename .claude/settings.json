@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/miuri/AppData/Roaming/Python/Python314/Scripts/code-review-graph.exe\" update --skip-flows",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"C:/Users/miuri/AppData/Roaming/Python/Python314/Scripts/code-review-graph.exe\" status",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

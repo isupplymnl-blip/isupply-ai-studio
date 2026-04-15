@@ -28,6 +28,13 @@ export function getAssetsDbPath(): string {
     : path.join(process.cwd(), 'data', 'assets.json');
 }
 
+export function getJobStoreDbPath(): string {
+  const base = process.env.USER_DATA_DIR;
+  return base
+    ? path.join(base, 'ecco-jobs.json')
+    : path.join(process.cwd(), 'data', 'ecco-jobs.json');
+}
+
 /** URL the browser uses to load an uploaded reference image */
 export function makeUploadUrl(filename: string): string {
   return `/api/uploads/${filename}`;

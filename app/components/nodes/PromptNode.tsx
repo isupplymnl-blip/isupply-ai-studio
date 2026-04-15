@@ -14,7 +14,7 @@ interface PromptNodeData {
 interface TagStatus { name: string; tags: string[]; matched: boolean; }
 
 export default function PromptNode({ id, data }: NodeProps<PromptNodeData>) {
-  const { onGenerateSlide, onUpdateSettings, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect, activeProvider } = useContext(StudioContext);
+  const { onGenerateSlide, onSelectNode, onDeleteNode, connectingFromId, onStartConnect, onCompleteConnect } = useContext(StudioContext);
   const allNodes = useNodes();
 
   const [prompt, setPrompt] = useState('');
@@ -152,7 +152,20 @@ export default function PromptNode({ id, data }: NodeProps<PromptNodeData>) {
       {/* Live reference detection */}
       {uploadAssets.length > 0 && (
         <div style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Reference Detection</p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+            <p style={{ fontSize: 9, color: '#55556A', textTransform: 'uppercase', letterSpacing: '0.05em', margin: 0 }}>Reference Detection</p>
+            <span
+              title="Generation uses up to 14 matched reference images per call"
+              style={{
+                fontSize: 9,
+                color: tagStatuses.filter(s => s.matched).length > 14 ? '#F59E0B' : '#55556A',
+                background: '#0A0A0B', padding: '1px 6px', borderRadius: 10,
+                border: '1px solid #2A2A35', cursor: 'default',
+              }}
+            >
+              {tagStatuses.filter(s => s.matched).length}/14
+            </span>
+          </div>
           {tagStatuses.map(s => (
             <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
               <div style={{ width: 5, height: 5, borderRadius: '50%', background: s.matched ? '#0D9488' : '#2A2A35', boxShadow: s.matched ? '0 0 4px #0D9488' : 'none', flexShrink: 0, transition: 'all 0.2s' }} />
@@ -160,73 +173,6 @@ export default function PromptNode({ id, data }: NodeProps<PromptNodeData>) {
               <span style={{ fontSize: 9, color: '#55556A' }}>{s.tags.slice(0, 3).join(', ')}</span>
             </div>
           ))}
-        </div>
-      )}
-
-      {/* EccoAPI inline controls */}
-      {activeProvider === 'ecco' && (
-        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>EccoAPI Settings</p>
-          {/* Model */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-            {(['nanobanana31', 'nanobananapro'] as const).map(m => {
-              const active = (data.settings?.eccoModel ?? 'nanobanana31') === m;
-              return (
-                <button key={m} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { eccoModel: m }); }}
-                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
-                  {m === 'nanobanana31' ? 'NB 3.1' : 'NB Pro'}
-                </button>
-              );
-            })}
-          </div>
-          {/* Image size */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-            {(['1K', '2K', '4K'] as const).map(s => {
-              const active = (data.settings?.imageSize ?? '1K') === s;
-              return (
-                <button key={s} onClick={e => { e.stopPropagation(); onUpdateSettings(id, { imageSize: s }); }}
-                  style={{ flex: 1, padding: '3px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>
-                  {s}
-                </button>
-              );
-            })}
-          </div>
-          {/* Search grounding */}
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
-            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
-              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
-              style={{ accentColor: '#7C3AED' }} />
-            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
-          </label>
-          {data.settings?.useGoogleSearch && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
-              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
-                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
-                style={{ accentColor: '#7C3AED' }} />
-              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
-            </label>
-          )}
-        </div>
-      )}
-
-      {/* Google Search grounding for Gemini / Pudding */}
-      {(activeProvider === 'gemini' || activeProvider === 'pudding') && (
-        <div className="nodrag" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 7, padding: '7px 9px', marginBottom: 9 }}>
-          <p style={{ fontSize: 9, color: '#55556A', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Search Grounding</p>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: data.settings?.useGoogleSearch ? 5 : 0 }} onClick={e => e.stopPropagation()}>
-            <input type="checkbox" checked={data.settings?.useGoogleSearch ?? false}
-              onChange={e => onUpdateSettings(id, { useGoogleSearch: e.target.checked })}
-              style={{ accentColor: '#7C3AED' }} />
-            <span style={{ fontSize: 9, color: '#9090A8' }}>Google Search grounding</span>
-          </label>
-          {data.settings?.useGoogleSearch && (
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }} onClick={e => e.stopPropagation()}>
-              <input type="checkbox" checked={data.settings?.useImageSearch ?? false}
-                onChange={e => onUpdateSettings(id, { useImageSearch: e.target.checked })}
-                style={{ accentColor: '#7C3AED' }} />
-              <span style={{ fontSize: 9, color: '#9090A8' }}>Image search</span>
-            </label>
-          )}
         </div>
       )}
 

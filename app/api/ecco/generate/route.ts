@@ -62,6 +62,42 @@ async function downloadAndPersist(assetUrl: string): Promise<string> {
   return makeGeneratedUrl(filename);
 }
 
+// ─── SSE streaming helper ─────────────────────────────────────────────────────
+
+const SSE_HEADERS = {
+  'Content-Type':      'text/event-stream',
+  'Cache-Control':     'no-cache',
+  'Connection':        'keep-alive',
+  'X-Accel-Buffering': 'no',
+} as const;
+
+function sseWrap(
+  runner: (send: (event: string, data: unknown) => void) => Promise<void>,
+): Response {
+  const encoder = new TextEncoder();
+  const body = new ReadableStream({
+    async start(ctrl) {
+      const send = (event: string, data: unknown) =>
+        ctrl.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+
+      send('heartbeat', { ts: Date.now() });
+      const hb = setInterval(() => send('heartbeat', { ts: Date.now() }), 15_000);
+
+      try {
+        await runner(send);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error('[ecco-stream] error:', message);
+        send('error', { error: message });
+      } finally {
+        clearInterval(hb);
+        ctrl.close();
+      }
+    },
+  });
+  return new Response(body, { headers: SSE_HEADERS });
+}
+
 // ─── Background generation (fire-and-forget) ──────────────────────────────────
 async function runEccoGeneration(
   jobId: string,
@@ -132,6 +168,7 @@ export async function POST(request: NextRequest) {
       mediaResolution?: string;
       safetyThreshold?: string;
       useAsync?: boolean;
+      useStreaming?: boolean;
     };
 
     const {
@@ -149,6 +186,7 @@ export async function POST(request: NextRequest) {
       mediaResolution,
       safetyThreshold,
       useAsync = false,
+      useStreaming = false,
     } = body;
 
     if (!prompt?.trim()) {
@@ -182,6 +220,7 @@ export async function POST(request: NextRequest) {
     const resolvedMediaRes     = (settings.mediaResolution  as string  | undefined) ?? mediaResolution ?? 'media_resolution_high';
     const resolvedSafetyThresh = (settings.safetyThreshold  as string  | undefined) ?? safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE';
     const resolvedAsync        = (settings.useAsync         as boolean | undefined) ?? useAsync;
+    const resolvedStreaming    = (settings.useStreaming      as boolean | undefined) ?? useStreaming;
 
     const safetyCategories = [
       'HARM_CATEGORY_HARASSMENT',
@@ -215,36 +254,67 @@ export async function POST(request: NextRequest) {
     console.log(`[ecco/generate] endpoint: https://eccoapi.com/api/v1/${model}/generate`);
     console.log(`[ecco/generate] body:`, JSON.stringify(loggableBody, null, 2));
 
+    // ── Helper: call Ecco API with auto-retry (up to 3 attempts on 500/503) ──
+    async function callEccoWithRetry(retryEccoBody: Record<string, unknown>): Promise<{
+      imageUrl: string;
+      remaining_credits?: number;
+      cost?: number;
+    }> {
+      const endpoint = `https://eccoapi.com/api/v1/${model}/generate`;
+      let lastError = '';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) {
+          await new Promise(r => setTimeout(r, 1500 * attempt));
+          console.log(`[ecco/generate] retry attempt ${attempt + 1}/3`);
+        }
+        try {
+          const res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify(retryEccoBody),
+          });
+          const data = await res.json() as Record<string, unknown>;
+          console.log(`[ecco/generate] ── RESPONSE FROM ECCOAPI (status ${res.status}) ──`);
+          console.log(`[ecco/generate] full response:`, JSON.stringify(data, null, 2));
+
+          const assetUrl = (data?.data as Record<string, unknown> | undefined)?.assetUrl as string | undefined;
+          if (!res.ok || !assetUrl) {
+            const msg = ECCO_ERRORS[res.status] ?? `EccoAPI error ${res.status}`;
+            // Only retry on 500/503
+            if (res.status === 500 || res.status === 503) {
+              lastError = msg;
+              continue;
+            }
+            throw new Error(msg);
+          }
+          const imageUrl = await downloadAndPersist(assetUrl);
+          const meta = data?.meta as Record<string, unknown> | undefined;
+          return { imageUrl, remaining_credits: meta?.remaining_credits as number | undefined, cost: meta?.cost as number | undefined };
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : String(err);
+          if (attempt < 2) continue;
+        }
+      }
+      throw new Error(lastError || 'EccoAPI generation failed after 3 attempts');
+    }
+
+    // ── SSE streaming mode: keep connection alive during sync Ecco call ────────
+    if (resolvedStreaming && !resolvedAsync) {
+      console.log(`[ecco/generate] mode: SSE-STREAM`);
+      return sseWrap(async (send) => {
+        const { imageUrl, remaining_credits, cost } = await callEccoWithRetry(eccoBody);
+        console.log(`[ecco/generate] sse stream completed imageUrl=${imageUrl}`);
+        send('complete', { imageUrl, nodeId, batchId, remaining_credits, cost });
+      });
+    }
+
     // ── Sync mode (default): block until EccoAPI responds, return imageUrl directly ──
     if (!resolvedAsync) {
       console.log(`[ecco/generate] mode: SYNC`);
       try {
-        const endpoint = `https://eccoapi.com/api/v1/${model}/generate`;
-        const res = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify(eccoBody),
-        });
-        const data = await res.json() as Record<string, unknown>;
-        console.log(`[ecco/generate] ── RESPONSE FROM ECCOAPI (status ${res.status}) ──`);
-        console.log(`[ecco/generate] full response:`, JSON.stringify(data, null, 2));
-
-        const assetUrl = (data?.data as Record<string, unknown> | undefined)?.assetUrl as string | undefined;
-        if (!res.ok || !assetUrl) {
-          const msg = ECCO_ERRORS[res.status] ?? `EccoAPI error ${res.status}`;
-          console.error(`[ecco/generate] sync failed: ${msg}`);
-          return NextResponse.json({ error: msg }, { status: res.status });
-        }
-        const imageUrl = await downloadAndPersist(assetUrl);
+        const { imageUrl, remaining_credits, cost } = await callEccoWithRetry(eccoBody);
         console.log(`[ecco/generate] sync completed imageUrl=${imageUrl}`);
-        const meta = data?.meta as Record<string, unknown> | undefined;
-        return NextResponse.json({
-          imageUrl,
-          nodeId,
-          batchId,
-          remaining_credits: meta?.remaining_credits,
-          cost: meta?.cost,
-        }, { status: 200 });
+        return NextResponse.json({ imageUrl, nodeId, batchId, remaining_credits, cost }, { status: 200 });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         console.error('[ecco/generate] sync error:', msg);

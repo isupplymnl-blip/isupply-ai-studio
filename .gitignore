@@ -49,3 +49,5 @@ next-env.d.ts
 /public/generated/
 /public/uploads/
 /data/
+# Added by code-review-graph
+.code-review-graph/
