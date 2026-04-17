@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "id": "afd-auto-heal",
+        "matcher": "Write|Edit|MultiEdit",
+        "command": "afd diagnose --format a2a --auto-heal"
+      }
+    ]
+  }
+}

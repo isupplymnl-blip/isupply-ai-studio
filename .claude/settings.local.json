@@ -45,6 +45,8 @@
     ]
   },
   "enabledMcpjsonServers": [
-    "code-review-graph"
-  ]
+    "code-review-graph",
+    "afd"
+  ],
+  "enableAllProjectMcpServers": true
 }
