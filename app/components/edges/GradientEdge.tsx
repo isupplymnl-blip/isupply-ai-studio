@@ -60,9 +60,9 @@ export default function GradientEdge({
             }}
             style={{
               width: 18, height: 18, borderRadius: '50%',
-              border: '1px solid #2A2A35',
-              background: '#111113',
-              color: '#55556A',
+              border: '1px solid var(--studio-border)',
+              background: 'var(--studio-surface)',
+              color: 'var(--studio-text-muted)',
               cursor: 'pointer',
               fontSize: 12,
               display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -77,9 +77,9 @@ export default function GradientEdge({
             }}
             onMouseLeave={e => {
               const b = e.currentTarget;
-              b.style.color = '#55556A';
-              b.style.borderColor = '#2A2A35';
-              b.style.background = '#111113';
+              b.style.color = 'var(--studio-text-muted)';
+              b.style.borderColor = 'var(--studio-border)';
+              b.style.background = 'var(--studio-surface)';
             }}
           >
             ×

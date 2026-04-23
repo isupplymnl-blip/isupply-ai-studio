@@ -1,4 +1,4 @@
-# Components (generated 2026-04-15)
+# Components (generated 2026-04-19)
 # (c)=client component. UI primitives (shadcn/radix) omitted.
 
 ## app\components
@@ -9,5 +9,6 @@
 (c) ModelCreationNode
 (c) OutputNode
 (c) PromptNode
+(c) SettingNode
 (c) UploadNode
 (c) WelcomeDialog  batches, onOpenBatch, onNewBatch, onNewAutomatedBatch, onDismiss

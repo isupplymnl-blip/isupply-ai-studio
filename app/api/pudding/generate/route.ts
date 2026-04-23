@@ -237,7 +237,8 @@ export async function POST(request: NextRequest) {
       useStreaming?: boolean;
     };
 
-    const { prompt, nodeId, type, settings = {}, referenceUrls = [], useStreaming = false } = body;
+    const { prompt: rawPrompt, nodeId, type, settings = {}, referenceUrls = [], useStreaming = false } = body;
+    const prompt = rawPrompt.replace(/^\[API:[^\]]+\]\s*\n?/i, '');
 
     if (!prompt?.trim()) {
       return NextResponse.json({ error: 'Prompt is required' }, { status: 400 });
@@ -264,6 +265,9 @@ export async function POST(request: NextRequest) {
 
       const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
       const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
+      // topK and seed forwarded to Pudding proxy — pass-through behavior untested; verify with Pudding separately
+      const topK            = typeof settings.topK === 'number' ? settings.topK : undefined;
+      const seed            = typeof settings.seed === 'number' && Number.isFinite(settings.seed) ? Math.round(settings.seed) : undefined;
       const includeThoughts = settings.includeThoughts !== false;
       const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
       const aspectRatio     = modelCreationAspectRatio(prompt);
@@ -272,6 +276,8 @@ export async function POST(request: NextRequest) {
       const genConfig = {
         temperature,
         ...(topP !== undefined ? { topP } : {}),
+        ...(topK !== undefined ? { topK } : {}),
+        ...(seed !== undefined ? { seed } : {}),
         responseModalities: ['TEXT', 'IMAGE'],
         thinkingConfig: { includeThoughts },
         imageConfig: { aspectRatio, imageSize, mediaResolution: 'media_resolution_high' },
@@ -320,6 +326,9 @@ export async function POST(request: NextRequest) {
     const imageSize       = geminiSize((settings.resolution as string | undefined) ?? (settings.imageSize as string | undefined) ?? '1K');
     const temperature     = typeof settings.temperature === 'number' ? settings.temperature : 1.0;
     const topP            = typeof settings.topP === 'number' ? settings.topP : undefined;
+    // topK and seed forwarded to Pudding proxy — pass-through behavior untested; verify with Pudding separately
+    const topK            = typeof settings.topK === 'number' ? settings.topK : undefined;
+    const seed            = typeof settings.seed === 'number' && Number.isFinite(settings.seed) ? Math.round(settings.seed) : undefined;
     const includeThoughts = settings.includeThoughts !== false;
     const mediaRes        = (settings.mediaResolution as string | undefined) ?? 'media_resolution_high';
     const safetyThresh    = (settings.safetyThreshold as SafetyThreshold | undefined) ?? 'BLOCK_MEDIUM_AND_ABOVE';
@@ -360,6 +369,8 @@ export async function POST(request: NextRequest) {
         const genConfig = {
           temperature,
           ...(topP !== undefined ? { topP } : {}),
+          ...(topK !== undefined ? { topK } : {}),
+          ...(seed !== undefined ? { seed } : {}),
           responseModalities: ['TEXT', 'IMAGE'],
           thinkingConfig: { includeThoughts },
           imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
@@ -401,6 +412,8 @@ export async function POST(request: NextRequest) {
     const genConfig = {
       temperature,
       ...(topP !== undefined ? { topP } : {}),
+      ...(topK !== undefined ? { topK } : {}),
+      ...(seed !== undefined ? { seed } : {}),
       responseModalities: ['TEXT', 'IMAGE'],
       thinkingConfig: { includeThoughts },
       imageConfig: { aspectRatio, imageSize, mediaResolution: mediaRes },
@@ -451,6 +464,17 @@ export async function POST(request: NextRequest) {
 
 // ─── Prompt builders ──────────────────────────────────────────────────────────
 
+function isDirectorPrompt(prompt: string): boolean {
+  const directorMarkers = [
+    'Hasselblad',
+    '8K resolution',
+    'anatomically correct',
+    'cinematic depth of field',
+    'photojournalistic realism',
+  ];
+  return directorMarkers.some(marker => prompt.includes(marker));
+}
+
 function buildSlidePrompt(
   prompt: string,
   settings: Record<string, unknown>,
@@ -466,7 +490,13 @@ function buildSlidePrompt(
     aspectRatio === '9:16' ? 'Vertical 9:16 portrait format.' :
     aspectRatio === '1:1'  ? 'Square 1:1 format.' :
                              '4:5 portrait ratio.';
-  return `${refDesc}${prompt}. ${ratioHint}${neg ? ` AVOID: ${neg}.` : ''} Photorealistic, ultra high quality, professional product photography.`;
+
+  // Skip quality wrapper for Director prompts (already have detailed quality tags)
+  const qualityTail = isDirectorPrompt(prompt)
+    ? ''
+    : ' Photorealistic, ultra high quality, professional product photography.';
+
+  return `${refDesc}${prompt}. ${ratioHint}${neg ? ` AVOID: ${neg}.` : ''}${qualityTail}`;
 }
 
 function detectModelCount(description: string): 1 | 2 | 3 {

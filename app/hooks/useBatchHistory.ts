@@ -105,7 +105,7 @@ export function useBatchHistory() {
   }, [activeBatchId]);
 
   const newBatch = useCallback((name: string, currentNodes: Node[], currentEdges: Edge[]) => {
-    const fresh = makeBatch(name);
+    const fresh = makeBatch(name, [], []);
     setBatches(prev => {
       const updated = prev.map(b =>
         b.id === activeBatchId ? { ...b, nodes: currentNodes, edges: currentEdges } : b

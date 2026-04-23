@@ -117,11 +117,11 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
     }
   };
 
-  const borderColor = isSource ? '#0D9488' : isTarget ? '#7C3AED' : saved ? '#0D9488' : '#2A2A35';
+  const borderColor = isSource ? '#0D9488' : isTarget ? 'var(--studio-accent)' : saved ? '#0D9488' : 'var(--studio-border)';
   const boxShadow = isSource
     ? '0 0 0 2px #0D948844, 0 4px 20px rgba(0,0,0,0.4)'
     : isTarget
-    ? '0 0 0 2px #7C3AED44, 0 4px 20px rgba(0,0,0,0.4)'
+    ? '0 0 0 2px color-mix(in srgb, var(--studio-accent) 27%, transparent), 0 4px 20px rgba(0,0,0,0.4)'
     : saved
     ? '0 0 0 1px #0D948830, 0 4px 20px #0D948820'
     : '0 4px 20px rgba(0,0,0,0.4)';
@@ -140,11 +140,11 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
       onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Element)) setIsDragging(false); }}
       style={{
         width: 300,
-        background: '#1A1A1F',
-        border: `1px solid ${isDragging ? '#7C3AED' : borderColor}`,
+        background: 'var(--studio-elevated)',
+        border: `1px solid ${isDragging ? 'var(--studio-accent)' : borderColor}`,
         borderRadius: 12,
         padding: 14,
-        boxShadow: isDragging ? '0 0 0 2px #7C3AED44, 0 4px 20px rgba(0,0,0,0.4)' : boxShadow,
+        boxShadow: isDragging ? '0 0 0 2px color-mix(in srgb, var(--studio-accent) 27%, transparent), 0 4px 20px rgba(0,0,0,0.4)' : boxShadow,
         cursor: isTarget ? 'crosshair' : 'default',
         transition: 'border-color 0.2s, box-shadow 0.2s',
         position: 'relative',
@@ -152,8 +152,8 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
     >
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 12 }}>
-        <div style={{ width: 6, height: 6, borderRadius: '50%', background: saved ? '#0D9488' : '#55556A', boxShadow: saved ? '0 0 5px #0D9488' : 'none' }} />
-        <span style={{ color: '#F1F0F5', fontWeight: 600, fontSize: 12 }}>Image Reference</span>
+        <div style={{ width: 6, height: 6, borderRadius: '50%', background: saved ? '#0D9488' : 'var(--studio-text-muted)', boxShadow: saved ? '0 0 5px #0D9488' : 'none' }} />
+        <span style={{ color: 'var(--studio-text)', fontWeight: 600, fontSize: 12 }}>Image Reference</span>
         {saved && <span style={{ fontSize: 10, color: '#0D9488', background: '#0D948818', padding: '2px 7px', borderRadius: 20, border: '1px solid #0D948840' }}>Saved</span>}
 
         {/* Connect button */}
@@ -164,9 +164,9 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
           style={{
             marginLeft: 'auto',
             width: 20, height: 20, borderRadius: 5,
-            border: `1px solid ${isSource ? '#0D9488' : '#2A2A35'}`,
-            background: isSource ? '#0D948822' : '#111113',
-            color: isSource ? '#0D9488' : '#55556A',
+            border: `1px solid ${isSource ? '#0D9488' : 'var(--studio-border)'}`,
+            background: isSource ? '#0D948822' : 'var(--studio-surface)',
+            color: isSource ? '#0D9488' : 'var(--studio-text-muted)',
             cursor: 'pointer', fontSize: 14, fontWeight: 700,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             lineHeight: 1, padding: 0,
@@ -182,13 +182,13 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
           onClick={e => { e.stopPropagation(); onDeleteNode(id); }}
           style={{
             width: 20, height: 20, borderRadius: 5,
-            border: '1px solid #2A2A35', background: '#111113', color: '#55556A',
+            border: '1px solid var(--studio-border)', background: 'var(--studio-surface)', color: 'var(--studio-text-muted)',
             cursor: 'pointer', fontSize: 12,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
             lineHeight: 1, padding: 0,
           }}
           onMouseEnter={e => { e.currentTarget.style.color = '#F43F5E'; e.currentTarget.style.borderColor = '#F43F5E44'; }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#55556A'; e.currentTarget.style.borderColor = '#2A2A35'; }}
+          onMouseLeave={e => { e.currentTarget.style.color = 'var(--studio-text-muted)'; e.currentTarget.style.borderColor = 'var(--studio-border)'; }}
         >
           ×
         </button>
@@ -207,7 +207,7 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
           <div style={{ marginBottom: 10, borderRadius: 7, overflow: 'hidden', position: 'relative' }}>
             <img src={data.savedImage!.url} alt={data.savedImage!.name} style={{ width: '100%', height: 120, objectFit: 'cover', display: 'block' }} />
             <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(to top, #0A0A0Bcc 0%, transparent 55%)' }} />
-            <div style={{ position: 'absolute', bottom: 7, left: 9, color: '#F1F0F5', fontSize: 11, fontWeight: 500 }}>{data.savedImage!.name}</div>
+            <div style={{ position: 'absolute', bottom: 7, left: 9, color: 'var(--studio-text)', fontSize: 11, fontWeight: 500 }}>{data.savedImage!.name}</div>
           </div>
           {data.savedImage!.tags.length > 0 && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 4 }}>
@@ -223,7 +223,7 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
           <div style={{ display: 'flex', gap: 4, marginBottom: 9 }}>
             {(['upload', 'asset'] as const).map(m => (
               <button key={m} className="nodrag" onClick={e => { e.stopPropagation(); setMode(m); }}
-                style={{ flex: 1, padding: '4px', fontSize: 10, fontWeight: 600, borderRadius: 5, border: `1px solid ${mode === m ? '#7C3AED' : '#2A2A35'}`, background: mode === m ? '#7C3AED22' : '#111113', color: mode === m ? '#7C3AED' : '#55556A', cursor: 'pointer' }}>
+                style={{ flex: 1, padding: '4px', fontSize: 10, fontWeight: 600, borderRadius: 5, border: `1px solid ${mode === m ? 'var(--studio-accent)' : 'var(--studio-border)'}`, background: mode === m ? 'color-mix(in srgb, var(--studio-accent) 13%, transparent)' : 'var(--studio-surface)', color: mode === m ? 'var(--studio-accent)' : 'var(--studio-text-muted)', cursor: 'pointer' }}>
                 {m === 'upload' ? 'Upload' : 'From Asset'}
               </button>
             ))}
@@ -236,13 +236,13 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                 className="nodrag"
                 onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
                 style={{
-                  border: `2px dashed ${isDragging ? '#7C3AED' : '#2A2A35'}`,
+                  border: `2px dashed ${isDragging ? 'var(--studio-accent)' : 'var(--studio-border)'}`,
                   borderRadius: 7,
                   padding: '16px 12px',
                   marginBottom: 10,
                   textAlign: 'center',
                   cursor: 'pointer',
-                  background: isDragging ? '#7C3AED11' : '#111113',
+                  background: isDragging ? 'color-mix(in srgb, var(--studio-accent) 7%, transparent)' : 'var(--studio-surface)',
                   transition: 'all 0.2s',
                 }}
               >
@@ -250,10 +250,10 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                   ? <img src={previewUrl} alt="preview" style={{ width: '100%', height: 90, objectFit: 'cover', borderRadius: 5 }} />
                   : <>
                       <div style={{ fontSize: 20, marginBottom: 5 }}>📂</div>
-                      <div style={{ color: '#9090A8', fontSize: 11 }}>
-                        Drop image or <span style={{ color: '#7C3AED', textDecoration: 'underline' }}>browse</span>
+                      <div style={{ color: 'var(--studio-text-sec)', fontSize: 11 }}>
+                        Drop image or <span style={{ color: 'var(--studio-accent)', textDecoration: 'underline' }}>browse</span>
                       </div>
-                      {isDragging && <div style={{ fontSize: 10, color: '#7C3AED', marginTop: 4 }}>Release to drop</div>}
+                      {isDragging && <div style={{ fontSize: 10, color: 'var(--studio-accent)', marginTop: 4 }}>Release to drop</div>}
                     </>
                 }
               </div>
@@ -262,7 +262,7 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                 onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f); }} />
 
               <input type="text" placeholder="Asset name (e.g. Pro 2 White)" value={name} onChange={e => setName(e.target.value)}
-                style={{ width: '100%', background: '#111113', border: '1px solid #2A2A35', borderRadius: 6, padding: '6px 9px', color: '#F1F0F5', fontSize: 11, outline: 'none', marginBottom: 7, boxSizing: 'border-box' }} />
+                style={{ width: '100%', background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '6px 9px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', marginBottom: 7, boxSizing: 'border-box' }} />
 
               {/* Tags input with autocomplete */}
               <div style={{ position: 'relative', marginBottom: 7 }}>
@@ -270,21 +270,21 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                   onChange={e => { setTagsInput(e.target.value); setShowSuggestions(true); }}
                   onFocus={() => setShowSuggestions(true)}
                   onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
-                  style={{ width: '100%', background: '#111113', border: '1px solid #2A2A35', borderRadius: 6, padding: '6px 9px', color: '#F1F0F5', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                  style={{ width: '100%', background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '6px 9px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
                 {showSuggestions && (() => {
                   const lastTag = tagsInput.split(',').pop()?.trim() ?? '';
                   const suggestions = lastTag.length >= 1
                     ? allTags.filter(t => t.includes(lastTag) && !parsedTags.includes(t))
                     : [];
                   return suggestions.length > 0 ? (
-                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, zIndex: 10, maxHeight: 100, overflowY: 'auto' }}>
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, zIndex: 10, maxHeight: 100, overflowY: 'auto' }}>
                       {suggestions.slice(0, 8).map(s => (
                         <div key={s} onMouseDown={() => {
                           const parts = tagsInput.split(',');
                           parts[parts.length - 1] = ` ${s}`;
                           setTagsInput(parts.join(',').trimStart() + ', ');
-                        }} style={{ padding: '5px 9px', fontSize: 11, color: '#9090A8', cursor: 'pointer', borderBottom: '1px solid #2A2A35' }}
-                          onMouseEnter={e => (e.currentTarget.style.background = '#111113')}
+                        }} style={{ padding: '5px 9px', fontSize: 11, color: 'var(--studio-text-sec)', cursor: 'pointer', borderBottom: '1px solid var(--studio-border)' }}
+                          onMouseEnter={e => (e.currentTarget.style.background = 'var(--studio-surface)')}
                           onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
                         >{s}</div>
                       ))}
@@ -296,14 +296,14 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
               {parsedTags.length > 0 && (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginBottom: 8 }}>
                   {parsedTags.map(t => (
-                    <span key={t} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: '#7C3AED18', color: '#7C3AED', border: '1px solid #7C3AED33' }}>{t}</span>
+                    <span key={t} style={{ fontSize: 10, padding: '2px 7px', borderRadius: 20, background: 'color-mix(in srgb, var(--studio-accent) 10%, transparent)', color: 'var(--studio-accent)', border: '1px solid color-mix(in srgb, var(--studio-accent) 20%, transparent)' }}>{t}</span>
                   ))}
                 </div>
               )}
               {error && <p style={{ color: '#F43F5E', fontSize: 10, marginBottom: 7 }}>{error}</p>}
 
               <button onClick={e => { e.stopPropagation(); handleSave(); }} disabled={isSaving}
-                style={{ width: '100%', padding: '7px', borderRadius: 6, border: 'none', cursor: isSaving ? 'not-allowed' : 'pointer', background: isSaving ? '#2A2A35' : 'linear-gradient(135deg, #7C3AED, #0D9488)', color: isSaving ? '#55556A' : '#fff', fontSize: 12, fontWeight: 600 }}>
+                style={{ width: '100%', padding: '7px', borderRadius: 6, border: 'none', cursor: isSaving ? 'not-allowed' : 'pointer', background: isSaving ? 'var(--studio-border)' : 'linear-gradient(135deg, #7C3AED, #0D9488)', color: isSaving ? 'var(--studio-text-muted)' : '#fff', fontSize: 12, fontWeight: 600 }}>
                 {isSaving ? 'Saving…' : 'Save Reference'}
               </button>
             </>
@@ -315,10 +315,10 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                 placeholder="Search by name or tag…"
                 value={assetSearch}
                 onChange={e => setAssetSearch(e.target.value)}
-                style={{ width: '100%', background: '#111113', border: '1px solid #2A2A35', borderRadius: 6, padding: '6px 9px', color: '#F1F0F5', fontSize: 11, outline: 'none', marginBottom: 7, boxSizing: 'border-box' }}
+                style={{ width: '100%', background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '6px 9px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', marginBottom: 7, boxSizing: 'border-box' }}
               />
               {filteredAssets.length === 0 ? (
-                <p style={{ fontSize: 11, color: '#55556A', textAlign: 'center', padding: '14px 0' }}>
+                <p style={{ fontSize: 11, color: 'var(--studio-text-muted)', textAlign: 'center', padding: '14px 0' }}>
                   {assetsList.length === 0 ? 'No saved assets yet — upload one first.' : 'No matching assets.'}
                 </p>
               ) : (
@@ -326,14 +326,14 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
                   {filteredAssets.map(a => (
                     <div key={a.id}
                       onClick={e => { e.stopPropagation(); handleSelectAsset(a); }}
-                      style={{ display: 'flex', gap: 8, alignItems: 'center', background: '#111113', border: '1px solid #2A2A35', borderRadius: 6, padding: 6, cursor: 'pointer', transition: 'border-color 0.15s' }}
-                      onMouseEnter={e => (e.currentTarget.style.borderColor = '#7C3AED44')}
-                      onMouseLeave={e => (e.currentTarget.style.borderColor = '#2A2A35')}
+                      style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: 6, cursor: 'pointer', transition: 'border-color 0.15s' }}
+                      onMouseEnter={e => (e.currentTarget.style.borderColor = 'color-mix(in srgb, var(--studio-accent) 27%, transparent)')}
+                      onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--studio-border)')}
                     >
                       <img src={a.url} alt={a.name} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 4, flexShrink: 0 }} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <p style={{ fontSize: 11, color: '#F1F0F5', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>{a.name}</p>
-                        <p style={{ fontSize: 9, color: '#55556A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.tags.join(', ') || 'no tags'}</p>
+                        <p style={{ fontSize: 11, color: 'var(--studio-text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>{a.name}</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.tags.join(', ') || 'no tags'}</p>
                       </div>
                     </div>
                   ))}
@@ -345,7 +345,7 @@ export default function UploadNode({ id, data }: NodeProps<UploadNodeData>) {
       )}
 
       <Handle type="source" position={Position.Right}
-        style={{ width: 10, height: 10, background: '#7C3AED', border: '2px solid #1A1A1F', boxShadow: '0 0 6px #7C3AED' }} />
+        style={{ width: 10, height: 10, background: 'var(--studio-accent)', border: '2px solid var(--studio-elevated)', boxShadow: '0 0 6px var(--studio-accent)' }} />
     </div>
   );
 }

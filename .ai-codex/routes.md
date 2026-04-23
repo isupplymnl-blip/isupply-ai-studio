@@ -1,4 +1,4 @@
-# API Routes (generated 2026-04-15)
+# API Routes (generated 2026-04-19)
 # 11 routes total.
 
 ## assets

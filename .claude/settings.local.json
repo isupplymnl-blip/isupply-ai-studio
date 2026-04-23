@@ -41,12 +41,20 @@
       "Bash(echo \"EXIT:$?\")",
       "Bash(C:/Users/miuri/AppData/Roaming/Python/Python314/Scripts/code-review-graph.exe install:*)",
       "Bash(uvx --version)",
-      "mcp__plugin_claude-mem_mcp-search__smart_outline"
+      "mcp__plugin_claude-mem_mcp-search__smart_outline",
+      "Bash(powershell -Command \"Expand-Archive -Path 'nano-banana-creator.skill' -DestinationPath './skill-extracted' -Force\")",
+      "Bash(rtk tsc *)",
+      "Bash(rtk npx *)",
+      "Bash(rtk wc *)",
+      "Bash(rtk ls *)",
+      "Bash(awk END{print NR} *)",
+      "Bash(rtk bash *)",
+      "Bash(powershell.exe *)"
     ]
   },
+  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "code-review-graph",
     "afd"
-  ],
-  "enableAllProjectMcpServers": true
+  ]
 }

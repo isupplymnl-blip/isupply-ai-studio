@@ -14,9 +14,10 @@ export interface NodeSettings {
   // Image Prompt / Carousel
   temperature?: number;       // default 1.0
   topP?: number;              // top-p nucleus sampling (0–1)
+  topK?: number;              // vocabulary breadth (1–100, default 40)
   guidanceScale?: number;
   negativePrompt?: string;
-  seed?: string;
+  seed?: number;
   safetyFilter?: string;      // legacy — kept for backward compat
   safetyThreshold?: 'BLOCK_NONE' | 'BLOCK_ONLY_HIGH' | 'BLOCK_MEDIUM_AND_ABOVE' | 'BLOCK_LOW_AND_ABOVE';
   includeThoughts?: boolean;  // default true
@@ -30,6 +31,9 @@ export interface NodeSettings {
   useImageSearch?: boolean;   // default false — image results from Google Search (Flash Image model only)
   useAsync?: boolean;         // default false (sync mode)
   useStreaming?: boolean;     // default false — SSE streaming to bypass 524 timeout
+  // Setting composite mode
+  compositeMode?: 'single' | 'multi-angle';
+  compositeAngles?: string[];  // angle labels, length = panel count (2 | 3 | 4)
   // Per-node provider override (overrides the global toolbar selection for this node)
   providerOverride?: 'gemini' | 'ecco' | 'pudding';
   // Image Output
@@ -54,6 +58,7 @@ export interface StudioContextType {
   onGenerateCarousel:  (nodeId: string, slides: CarouselSlide[], settings?: NodeSettings) => Promise<void>;
   onRegenerate:        (outputNodeId: string, lastPrompt: string, settings?: NodeSettings) => Promise<void>;
   onCreateModel:       (nodeId: string, description: string, settings: NodeSettings) => Promise<void>;
+  onGenerateSetting:   (nodeId: string, text: string, settings: NodeSettings) => Promise<void>;
   onUpdateSettings:    (nodeId: string, settings: Partial<NodeSettings>) => void;
   onUpdateData:        (nodeId: string, data: Record<string, unknown>) => void;
   onSelectNode:        (nodeId: string, nodeType: string) => void;
@@ -77,6 +82,7 @@ export const StudioContext = createContext<StudioContextType>({
   onGenerateCarousel:  async () => {},
   onRegenerate:        async () => {},
   onCreateModel:       async () => {},
+  onGenerateSetting:   async () => {},
   onUpdateSettings:    () => {},
   onUpdateData:        () => {},
   onSelectNode:        () => {},

@@ -45,7 +45,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
           margin: 'auto',
         }}>
           <strong>⚠ Canvas Error</strong>
-          <p style={{ marginTop: 5, color: '#9090A8', fontSize: 10, lineHeight: 1.5 }}>
+          <p style={{ marginTop: 5, color: 'var(--studio-text-sec)', fontSize: 10, lineHeight: 1.5 }}>
             {this.state.error?.message ?? 'An unexpected error occurred in a canvas node.'}
           </p>
           <button
@@ -56,7 +56,7 @@ export class ErrorBoundary extends React.Component<Props, State> {
               fontSize: 10,
               fontWeight: 600,
               borderRadius: 5,
-              background: '#1A1A1F',
+              background: 'var(--studio-elevated)',
               border: '1px solid #F43F5E44',
               color: '#F43F5E',
               cursor: 'pointer',

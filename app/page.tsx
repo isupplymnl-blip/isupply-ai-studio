@@ -24,6 +24,7 @@ import PromptNode        from './components/nodes/PromptNode';
 import OutputNode        from './components/nodes/OutputNode';
 import ModelCreationNode from './components/nodes/ModelCreationNode';
 import CarouselPromptNode from './components/nodes/CarouselPromptNode';
+import SettingNode        from './components/nodes/SettingNode';
 import GradientEdge      from './components/edges/GradientEdge';
 import WelcomeDialog     from './components/WelcomeDialog';
 import { ErrorBoundary }  from './components/ErrorBoundary';
@@ -32,7 +33,7 @@ import { useBatchHistory, GeneratedImage } from './hooks/useBatchHistory';
 import { useGenerationQueue, GenerationJob } from './hooks/useGenerationQueue';
 
 // Module-level constants — never re-registered between renders
-const nodeTypes = { uploadNode: UploadNode, promptNode: PromptNode, outputNode: OutputNode, modelCreationNode: ModelCreationNode, carouselNode: CarouselPromptNode };
+const nodeTypes = { uploadNode: UploadNode, promptNode: PromptNode, outputNode: OutputNode, modelCreationNode: ModelCreationNode, carouselNode: CarouselPromptNode, settingNode: SettingNode };
 const edgeTypes = { gradient: GradientEdge };
 const mkEdge = (id: string, src: string, tgt: string): Edge => ({ id, source: src, target: tgt, type: 'gradient', animated: true });
 
@@ -75,6 +76,7 @@ function StudioCanvas() {
   // ── Provider & credits state ──────────────────────────────────────────────
   const [activeProvider, setActiveProvider] = useState<'gemini' | 'ecco' | 'pudding'>('gemini');
   const [eccoCredits, setEccoCredits] = useState<number | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const activeProviderRef = useRef<'gemini' | 'ecco' | 'pudding'>('gemini');
   activeProviderRef.current = activeProvider;
   const activeBatchIdRef = useRef(activeBatchId);
@@ -95,6 +97,13 @@ function StudioCanvas() {
     }
     const savedCredits = localStorage.getItem('isupply-ecco-credits');
     if (savedCredits !== null) setEccoCredits(parseFloat(savedCredits));
+
+    // Load theme
+    const savedTheme = localStorage.getItem('isupply-theme') as 'dark' | 'light' | null;
+    if (savedTheme) {
+      setTheme(savedTheme);
+      document.documentElement.dataset.theme = savedTheme;
+    }
   }, []);
 
   const toggleProvider = useCallback(() => {
@@ -103,6 +112,24 @@ function StudioCanvas() {
     setActiveProvider(next);
     localStorage.setItem('isupply-provider', next);
   }, [activeProvider]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme(prev => {
+      const next = prev === 'dark' ? 'light' : 'dark';
+      if (typeof document !== 'undefined') {
+        document.documentElement.setAttribute('data-theme', next);
+        document.body.setAttribute('data-theme', next);
+      }
+      localStorage.setItem('isupply-theme', next);
+      return next;
+    });
+  }, []);
+
+  // Ensure theme attribute stays synced across renders (e.g. after localStorage load)
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    document.body.setAttribute('data-theme', theme);
+  }, [theme]);
 
   const edgesRef = useRef<Edge[]>(edges);
   edgesRef.current = edges;
@@ -485,7 +512,7 @@ function StudioCanvas() {
     if (!el) return;
     setIsExporting(true);
     try {
-      const dataUrl = await toPng(el, { backgroundColor: '#0A0A0B', pixelRatio: 2 });
+      const dataUrl = await toPng(el, { backgroundColor: 'var(--studio-bg)', pixelRatio: 2 });
       const a = document.createElement('a');
       a.href = dataUrl;
       a.download = `canvas-${Date.now()}.png`;
@@ -569,7 +596,7 @@ function StudioCanvas() {
           const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
           setNodes(nds => nds.map(n => {
             if (outputNodeIds.includes(n.id))
-              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, lastSettings: body.settings, error: undefined } };
             if (body.type === 'slide' && n.id === body.nodeId) {
               type H = { prompt: string; ts: string };
               const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
@@ -621,7 +648,7 @@ function StudioCanvas() {
           const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
           setNodes(nds => nds.map(n => {
             if (outputNodeIds.includes(n.id))
-              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, error: undefined } };
+              return { ...n, data: { ...n.data, isLoading: false, imageUrl: data.imageUrl, lastPrompt: promptText, lastSettings: body.settings, error: undefined } };
             if (body.type === 'slide' && n.id === body.nodeId) {
               type H = { prompt: string; ts: string };
               const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
@@ -697,7 +724,7 @@ function StudioCanvas() {
               const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
               setNodes(nds => nds.map(n => {
                 if (outputNodeIds.includes(n.id))
-                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
+                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, lastSettings: attempt.settings, error: undefined } };
                 if (attempt.type === 'slide' && n.id === attempt.nodeId) {
                   type H = { prompt: string; ts: string };
                   const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
@@ -774,7 +801,7 @@ function StudioCanvas() {
               const historyEntry = { prompt: promptText, ts: new Date().toISOString() };
               setNodes(nds => nds.map(n => {
                 if (outputNodeIds.includes(n.id))
-                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, error: undefined } };
+                  return { ...n, data: { ...n.data, isLoading: false, imageUrl: parsed.imageUrl, lastPrompt: promptText, lastSettings: attempt.settings, error: undefined } };
                 if (attempt.type === 'slide' && n.id === attempt.nodeId) {
                   type H = { prompt: string; ts: string };
                   const prev = (n.data as { promptHistory?: H[] }).promptHistory ?? [];
@@ -800,13 +827,17 @@ function StudioCanvas() {
     return undefined;
   }, [addGeneratedImage]);
 
-  /** Collect URLs of UploadNodes connected as inputs to a given node */
+  /** Collect reference image URLs from connected UploadNodes and SettingNodes */
   const getConnectedUploadUrls = useCallback((nodeId: string): string[] =>
     edgesRef.current
       .filter(e => e.target === nodeId)
       .map(e => nodesRef.current.find(n => n.id === e.source))
-      .filter(n => n?.type === 'uploadNode')
-      .map(n => (n?.data as { savedImage?: { url: string } })?.savedImage?.url)
+      .filter(n => n?.type === 'uploadNode' || n?.type === 'settingNode')
+      .map(n => {
+        if (n?.type === 'uploadNode') return (n.data as { savedImage?: { url: string } })?.savedImage?.url;
+        if (n?.type === 'settingNode') return (n.data as { imageUrl?: string })?.imageUrl;
+        return undefined;
+      })
       .filter((url): url is string => !!url),
   []);
 
@@ -1018,6 +1049,71 @@ function StudioCanvas() {
     }
   }, [addGeneratedImage, callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, callEccoGenerateStream, callGenerate, callGeminiGenerateStream, getConnectedUploadUrls]);
 
+  const SETTING_QUALITY_TAIL = 'no people — no products — background plate only — photorealistic';
+
+  const onGenerateSetting = useCallback(async (nodeId: string, text: string, settings: NodeSettings) => {
+    setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: true, error: undefined } } : n));
+
+    const isComposite = settings.compositeMode === 'multi-angle';
+    const angles = settings.compositeAngles ?? [];
+    const effectiveCount = angles.length >= 2 ? angles.length : 4;
+    const compositeRatio = effectiveCount <= 2 ? '16:9' : '21:9';
+
+    let fullPrompt: string;
+    if (isComposite && angles.length >= 2) {
+      const panelList = angles.map((a, i) => a.trim() || `Angle ${i + 1}`).join(' · ');
+      fullPrompt = `Create a professional composite image with ${effectiveCount} panels in a single ${compositeRatio} frame showing the same location from ${effectiveCount} camera angles. Same lighting, same time of day, same environment across all panels. Panels layout (left to right): ${panelList}. ${text.trim()}. ${SETTING_QUALITY_TAIL}`;
+    } else {
+      fullPrompt = `${text.trim()}\n\n${SETTING_QUALITY_TAIL}`;
+    }
+
+    // Enforce temperature within plate-safe range
+    const clampedSettings: NodeSettings = {
+      ...settings,
+      temperature: Math.min(0.7, Math.max(0.5, settings.temperature ?? 0.6)),
+      ...(isComposite && angles.length >= 2 ? { aspectRatio: compositeRatio } : {}),
+    };
+
+    if (activeProviderRef.current === 'ecco') {
+      const eccoFn = settings?.useStreaming ? callEccoGenerateStream : callEccoGenerate;
+      await eccoFn(nodeId, {
+        prompt: fullPrompt,
+        nodeId,
+        model:           (settings?.eccoModel as string | undefined) ?? 'nanobananapro',
+        aspectRatio:     '16:9',
+        imageSize:       settings?.imageSize       ?? '1K',
+        useGoogleSearch: false,
+        useImageSearch:  false,
+        temperature:     clampedSettings.temperature,
+        includeThoughts: settings?.includeThoughts ?? true,
+        mediaResolution: settings?.mediaResolution ?? 'media_resolution_high',
+        safetyThreshold: settings?.safetyThreshold ?? 'BLOCK_MEDIUM_AND_ABOVE',
+        useAsync:        false,
+        referenceUrls:   [],
+      });
+    } else if (activeProviderRef.current === 'pudding') {
+      const puddingFn = settings?.useStreaming ? callPuddingGenerateStream : callPuddingGenerate;
+      await puddingFn([nodeId], { prompt: fullPrompt, nodeId, type: 'slide', settings: clampedSettings });
+    } else {
+      let lastError = '';
+      for (let retry = 0; retry < 3; retry++) {
+        if (retry > 0) await new Promise(r => setTimeout(r, 1500 * retry));
+        try {
+          const fn = settings?.useStreaming ? callGeminiGenerateStream : callGenerate;
+          const result = await fn([nodeId], { prompt: fullPrompt, nodeId, type: 'slide', settings: clampedSettings });
+          if (result !== undefined || !settings?.useStreaming) return;
+        } catch (err) {
+          lastError = err instanceof Error ? err.message : 'Generation failed';
+          if (retry < 2) continue;
+        }
+        break;
+      }
+      if (lastError) {
+        setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, isLoading: false, error: lastError } } : n));
+      }
+    }
+  }, [callPuddingGenerate, callPuddingGenerateStream, callEccoGenerate, callEccoGenerateStream, callGenerate, callGeminiGenerateStream]);
+
   const onAddCarouselSlide = useCallback((carouselNodeId: string) => {
     const outCount = nodesRef.current.filter(n => n.type === 'outputNode').length;
     const carouselNode = nodesRef.current.find(n => n.id === carouselNodeId);
@@ -1073,39 +1169,86 @@ function StudioCanvas() {
   }, []);
 
   const studioCtx = useMemo(() => ({
-    onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
+    onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel, onGenerateSetting,
     onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
     onDeleteNode, onAddCarouselSlide, onRemoveCarouselSlide,
     connectingFromId, onStartConnect, onCompleteConnect,
     activeProvider,
-  }), [onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel,
+  }), [onSaveImage, onGenerateSlide, onGenerateCarousel, onRegenerate, onCreateModel, onGenerateSetting,
       onUpdateSettings, onUpdateData, onSelectNode, onAddToLibrary,
       onDeleteNode, onAddCarouselSlide, onRemoveCarouselSlide,
       connectingFromId, onStartConnect, onCompleteConnect, activeProvider]);
 
   // ── Node helpers ─────────────────────────────────────────────────────────
-  const nextY = (nds: Node[], type: string, h: number) => {
-    const same = nds.filter(n => n.type === type);
-    return same.length ? Math.max(...same.map(n => n.position.y)) + h + 30 : 80;
+  // Approx node dimensions per type for collision detection
+  const NODE_SIZE: Record<string, { w: number; h: number }> = {
+    uploadNode:        { w: 280, h: 300 },
+    promptNode:        { w: 360, h: 280 },
+    outputNode:        { w: 340, h: 320 },
+    modelCreationNode: { w: 320, h: 320 },
+    settingNode:       { w: 320, h: 340 },
+    carouselNode:      { w: 380, h: 400 },
   };
 
-  const addUploadNode = () => setNodes(nds => [...nds, { id: `upload-${Date.now()}`, type: 'uploadNode', position: { x: 60, y: nextY(nds, 'uploadNode', 300) }, data: { label: `Reference ${nds.filter(n => n.type === 'uploadNode').length + 1}` } }]);
+  const rectsOverlap = (a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }) =>
+    !(a.x + a.w + 20 < b.x || b.x + b.w + 20 < a.x || a.y + a.h + 20 < b.y || b.y + b.h + 20 < a.y);
+
+  // Find first non-overlapping slot near anchor x, scanning downward then in columns
+  const findFreeSlot = (nds: Node[], type: string, anchorX: number): { x: number; y: number } => {
+    const size = NODE_SIZE[type] ?? { w: 340, h: 300 };
+    const occupied = nds.map(n => {
+      const s = NODE_SIZE[n.type ?? ''] ?? { w: 340, h: 300 };
+      return { x: n.position.x, y: n.position.y, w: s.w, h: s.h };
+    });
+    // Try columns offsetted from anchorX, then scan Y downward in each column
+    for (let col = 0; col < 6; col++) {
+      const x = anchorX + col * (size.w + 40);
+      for (let y = 80; y < 8000; y += size.h + 30) {
+        const candidate = { x, y, w: size.w, h: size.h };
+        if (!occupied.some(o => rectsOverlap(candidate, o))) return { x, y };
+      }
+    }
+    // Fallback: stack below lowest node
+    const maxY = nds.length ? Math.max(...nds.map(n => n.position.y)) : 0;
+    return { x: anchorX, y: maxY + size.h + 40 };
+  };
+
+  const addUploadNode = () => setNodes(nds => {
+    const pos = findFreeSlot(nds, 'uploadNode', 60);
+    return [...nds, { id: `upload-${Date.now()}`, type: 'uploadNode', position: pos, data: { label: `Reference ${nds.filter(n => n.type === 'uploadNode').length + 1}` } }];
+  });
   const addPromptNode = () => {
     const pid = `prompt-${Date.now()}`; const oid = `output-${Date.now() + 1}`;
-    setNodes(nds => { const c = nds.filter(n => n.type === 'promptNode').length; const y = nextY(nds, 'promptNode', 280); return [...nds,
-      { id: pid, type: 'promptNode',  position: { x: 440, y }, data: { label: `Slide ${c + 1}`, slideNumber: c + 1 } },
-      { id: oid, type: 'outputNode',  position: { x: 880, y }, data: { label: `Output ${c + 1}`, slideNumber: c + 1, isLoading: false, imageUrl: '' } },
-    ]; });
-    setEdges(eds => [...eds, mkEdge(`e-${pid}-${oid}`, pid, oid)]);
+    setNodes(nds => {
+      const c = nds.filter(n => n.type === 'promptNode').length;
+      const promptPos = findFreeSlot(nds, 'promptNode', 440);
+      const withPrompt = [...nds, { id: pid, type: 'promptNode', position: promptPos, data: { label: `Slide ${c + 1}`, slideNumber: c + 1 } }];
+      const outputPos = findFreeSlot(withPrompt, 'outputNode', promptPos.x + 440);
+      // Keep output roughly aligned with prompt row
+      const alignedOutput = { x: outputPos.x, y: promptPos.y };
+      const outputSize = NODE_SIZE.outputNode;
+      const outputConflicts = withPrompt.some(n => {
+        const s = NODE_SIZE[n.type ?? ''] ?? { w: 340, h: 300 };
+        return rectsOverlap({ x: alignedOutput.x, y: alignedOutput.y, w: outputSize.w, h: outputSize.h }, { x: n.position.x, y: n.position.y, w: s.w, h: s.h });
+      });
+      return [...withPrompt, { id: oid, type: 'outputNode', position: outputConflicts ? outputPos : alignedOutput, data: { label: `Output ${c + 1}`, slideNumber: c + 1, isLoading: false, imageUrl: '' } }];
+    });
+    const autoEdges = nodesRef.current
+      .filter(n => n.type === 'settingNode' || n.type === 'uploadNode')
+      .filter(n => !edgesRef.current.some(e => e.source === n.id && e.target === pid))
+      .map(n => mkEdge(`e-auto-${n.id}-${pid}`, n.id, pid));
+    setEdges(eds => [...eds, mkEdge(`e-${pid}-${oid}`, pid, oid), ...autoEdges]);
   };
-  const addModelNode  = () => setNodes(nds => [...nds, { id: `model-${Date.now()}`, type: 'modelCreationNode', position: { x: 200, y: nextY(nds, 'modelCreationNode', 320) }, data: { label: 'Model' } }]);
+  const addModelNode   = () => setNodes(nds => [...nds, { id: `model-${Date.now()}`,   type: 'modelCreationNode', position: findFreeSlot(nds, 'modelCreationNode', 200), data: { label: 'Model' } }]);
+  const addSettingNode = () => setNodes(nds => [...nds, { id: `setting-${Date.now()}`, type: 'settingNode',       position: findFreeSlot(nds, 'settingNode',       200), data: { label: 'Setting' } }]);
 
   // Opens the count picker — actual creation happens in createCarouselNode
   const addCarouselSlide = () => setCarouselPicker({ visible: true, count: 6 });
 
   const createCarouselNode = (count: number) => {
     const cid    = `carousel-${Date.now()}`;
-    const baseY  = nextY(nodesRef.current, 'carouselNode', 400);
+    const carouselPos = findFreeSlot(nodesRef.current, 'carouselNode', 440);
+    const baseY  = carouselPos.y;
     const outCount = nodesRef.current.filter(n => n.type === 'outputNode').length;
 
     // Start output nodes below the last existing output node to avoid overlap
@@ -1114,7 +1257,7 @@ function StudioCanvas() {
       ? Math.max(...existingOutNodes.map(n => n.position.y))
       : baseY - 320;
     const outStartY = Math.max(baseY, existingMaxY + 340);
-    const outX = 900;
+    const outX = carouselPos.x + 460;
 
     const outputNodes: Node[] = Array.from({ length: count }, (_, i) => ({
       id: `output-${Date.now()}-${i}`,
@@ -1131,13 +1274,17 @@ function StudioCanvas() {
 
     const carouselNode: Node = {
       id: cid, type: 'carouselNode',
-      position: { x: 440, y: baseY },
+      position: carouselPos,
       data: { label: 'Carousel', slides },
     };
 
     const newEdges = outputNodes.map(on => mkEdge(`e-${cid}-${on.id}`, cid, on.id));
+    const autoEdges = nodesRef.current
+      .filter(n => n.type === 'settingNode' || n.type === 'uploadNode')
+      .filter(n => !edgesRef.current.some(e => e.source === n.id && e.target === cid))
+      .map(n => mkEdge(`e-auto-${n.id}-${cid}`, n.id, cid));
     setNodes(nds => [...nds, carouselNode, ...outputNodes]);
-    setEdges(eds => [...eds, ...newEdges]);
+    setEdges(eds => [...eds, ...newEdges, ...autoEdges]);
     setCarouselPicker({ visible: false, count: 6 });
   };
 
@@ -1198,18 +1345,18 @@ function StudioCanvas() {
 
   return (
     <StudioContext.Provider value={studioCtx}>
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: '#0A0A0B', color: '#F1F0F5', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--studio-bg)', color: 'var(--studio-text)', overflow: 'hidden' }}>
 
         {/* ── Header ── */}
-        <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', background: '#111113', borderBottom: '1px solid #2A2A35', zIndex: 20 }}>
+        <header style={{ height: 50, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 18px', background: 'var(--studio-surface)', borderBottom: '1px solid var(--studio-border)', zIndex: 20 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <div style={{ width: 26, height: 26, borderRadius: 7, background: 'linear-gradient(135deg, #7C3AED, #0D9488)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 10, color: '#fff' }}>iS</div>
-            <span style={{ fontWeight: 700, fontSize: 13, color: '#F1F0F5' }}>iSupply AI Studio</span>
-            <span style={{ fontSize: 9, color: '#55556A', background: '#1A1A1F', padding: '2px 7px', borderRadius: 20, border: '1px solid #2A2A35' }}>Beta</span>
+            <span style={{ fontWeight: 700, fontSize: 13, color: 'var(--studio-text)' }}>iSupply AI Studio</span>
+            <span style={{ fontSize: 9, color: 'var(--studio-text-muted)', background: 'var(--studio-elevated)', padding: '2px 7px', borderRadius: 20, border: '1px solid var(--studio-border)' }}>Beta</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 11, color: '#9090A8' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 11, color: 'var(--studio-text-sec)' }}>
             {activeProvider === 'ecco' && (
-              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: eccoCredits !== null && eccoCredits < 2 ? '#F59E0B' : '#9090A8' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: 4, color: eccoCredits !== null && eccoCredits < 2 ? '#F59E0B' : 'var(--studio-text-sec)' }}>
                 {eccoCredits !== null && eccoCredits < 2 && <span title="Low credits">⚠</span>}
                 {eccoCredits !== null
                   ? `${eccoCredits < 2 ? 'Low credits' : 'Credits'}: $${eccoCredits.toFixed(2)}`
@@ -1240,7 +1387,19 @@ function StudioCanvas() {
               );
             })()}
             <span>Active batch:</span>
-            <span style={{ color: '#F1F0F5', fontWeight: 600 }}>{activeBatch?.name}</span>
+            <span style={{ color: 'var(--studio-text)', fontWeight: 600 }}>{activeBatch?.name}</span>
+            <button
+              onClick={toggleTheme}
+              title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
+              style={{
+                width: 28, height: 28, borderRadius: 8, cursor: 'pointer',
+                border: '1px solid var(--studio-border)', background: 'var(--studio-elevated)',
+                color: 'var(--studio-text-sec)', fontSize: 13,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}
+            >
+              {theme === 'dark' ? '☀' : '☾'}
+            </button>
           </div>
         </header>
 
@@ -1248,28 +1407,28 @@ function StudioCanvas() {
         <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
 
           {/* ── Left panel ── */}
-          <aside style={{ width: leftSidebarOpen ? 230 : 36, flexShrink: 0, background: '#111113', borderRight: '1px solid #2A2A35', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease', overflow: 'hidden' }}>
+          <aside style={{ width: leftSidebarOpen ? 230 : 36, flexShrink: 0, background: 'var(--studio-surface)', borderRight: '1px solid var(--studio-border)', display: 'flex', flexDirection: 'column', transition: 'width 0.2s ease', overflow: 'hidden' }}>
             {/* Collapse toggle */}
             <button
               onClick={() => setLeftSidebarOpen(v => !v)}
               title={leftSidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
               style={{
-                flexShrink: 0, height: 36, border: 'none', borderBottom: '1px solid #2A2A35',
-                background: '#111113', color: '#55556A', cursor: 'pointer', fontSize: 14,
+                flexShrink: 0, height: 36, border: 'none', borderBottom: '1px solid var(--studio-border)',
+                background: 'var(--studio-surface)', color: 'var(--studio-text-muted)', cursor: 'pointer', fontSize: 14,
                 display: 'flex', alignItems: 'center', justifyContent: leftSidebarOpen ? 'flex-end' : 'center',
                 paddingRight: leftSidebarOpen ? 10 : 0,
               }}
-              onMouseEnter={e => { e.currentTarget.style.color = '#F1F0F5'; }}
-              onMouseLeave={e => { e.currentTarget.style.color = '#55556A'; }}
+              onMouseEnter={e => { e.currentTarget.style.color = 'var(--studio-text)'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = 'var(--studio-text-muted)'; }}
             >
               {leftSidebarOpen ? '‹' : '›'}
             </button>
 
             {/* Tabs */}
-            {leftSidebarOpen && <div style={{ display: 'flex', borderBottom: '1px solid #2A2A35', flexShrink: 0 }}>
+            {leftSidebarOpen && <div style={{ display: 'flex', borderBottom: '1px solid var(--studio-border)', flexShrink: 0 }}>
               {(['batches', 'assets', 'library'] as const).map(tab => (
                 <button key={tab} onClick={() => setLeftTab(tab)}
-                  style={{ flex: 1, padding: '9px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', textTransform: 'capitalize', background: leftTab === tab ? '#1A1A1F' : 'transparent', color: leftTab === tab ? '#F1F0F5' : '#55556A', borderBottom: leftTab === tab ? '2px solid #7C3AED' : '2px solid transparent' }}>
+                  style={{ flex: 1, padding: '9px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', textTransform: 'capitalize', background: leftTab === tab ? 'var(--studio-elevated)' : 'transparent', color: leftTab === tab ? 'var(--studio-text)' : 'var(--studio-text-muted)', borderBottom: leftTab === tab ? '2px solid #7C3AED' : '2px solid transparent' }}>
                   {tab === 'library' ? 'Library' : tab === 'assets' ? 'Assets' : 'Batches'}
                 </button>
               ))}
@@ -1286,26 +1445,26 @@ function StudioCanvas() {
                       <input value={newBatchName} onChange={e => setNewBatchName(e.target.value)}
                         onKeyDown={e => e.key === 'Enter' && handleNewBatch()}
                         placeholder="Batch name…"
-                        style={{ flex: 1, background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', minWidth: 0 }} />
+                        style={{ flex: 1, background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', minWidth: 0 }} />
                       <div style={{ position: 'relative', flexShrink: 0 }}>
                         <button
                           onClick={() => setShowBatchTypeMenu(v => !v)}
-                          style={{ padding: '5px 10px', background: '#7C3AED', border: 'none', borderRadius: 6, color: '#fff', fontSize: 11, cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                          style={{ padding: '5px 10px', background: 'var(--studio-accent)', border: 'none', borderRadius: 6, color: '#fff', fontSize: 11, cursor: 'pointer', fontWeight: 700, whiteSpace: 'nowrap' }}>
                           + ▾
                         </button>
                         {showBatchTypeMenu && (
                           <>
                             <div onClick={() => setShowBatchTypeMenu(false)} style={{ position: 'fixed', inset: 0, zIndex: 50 }} />
-                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 8, overflow: 'hidden', zIndex: 51, minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
+                            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 8, overflow: 'hidden', zIndex: 51, minWidth: 160, boxShadow: '0 8px 24px rgba(0,0,0,0.5)' }}>
                               <button onClick={handleNewBatch}
-                                style={{ display: 'block', width: '100%', padding: '8px 12px', fontSize: 11, textAlign: 'left', background: 'none', border: 'none', color: '#F1F0F5', cursor: 'pointer', borderBottom: '1px solid #2A2A35' }}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#111113')}
+                                style={{ display: 'block', width: '100%', padding: '8px 12px', fontSize: 11, textAlign: 'left', background: 'none', border: 'none', color: 'var(--studio-text)', cursor: 'pointer', borderBottom: '1px solid var(--studio-border)' }}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'var(--studio-surface)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
                                 ✦ Create Batch
                               </button>
                               <button onClick={handleNewAutomatedBatch}
                                 style={{ display: 'block', width: '100%', padding: '8px 12px', fontSize: 11, textAlign: 'left', background: 'none', border: 'none', color: '#A78BFA', cursor: 'pointer' }}
-                                onMouseEnter={e => (e.currentTarget.style.background = '#111113')}
+                                onMouseEnter={e => (e.currentTarget.style.background = 'var(--studio-surface)')}
                                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}>
                                 ⚡ Create Automated Batch
                               </button>
@@ -1318,13 +1477,13 @@ function StudioCanvas() {
 
                   {batches.map(b => (
                     <div key={b.id} onClick={() => handleSwitchBatch(b.id)}
-                      style={{ background: b.id === activeBatchId ? '#1A1A1F' : 'transparent', border: `1px solid ${b.id === activeBatchId ? '#7C3AED44' : '#2A2A35'}`, borderRadius: 8, padding: '8px 10px', marginBottom: 5, cursor: 'pointer', transition: 'all 0.15s' }}>
+                      style={{ background: b.id === activeBatchId ? 'var(--studio-elevated)' : 'transparent', border: `1px solid ${b.id === activeBatchId ? 'color-mix(in srgb, var(--studio-accent) 27%, transparent)' : 'var(--studio-border)'}`, borderRadius: 8, padding: '8px 10px', marginBottom: 5, cursor: 'pointer', transition: 'all 0.15s' }}>
                       {renamingId === b.id ? (
                         <input autoFocus value={renameVal} onChange={e => setRenameVal(e.target.value)}
                           onBlur={() => { renameBatch(b.id, renameVal.trim() || b.name); setRenamingId(null); }}
                           onKeyDown={e => { if (e.key === 'Enter') { renameBatch(b.id, renameVal.trim() || b.name); setRenamingId(null); } }}
                           onClick={e => e.stopPropagation()}
-                          style={{ width: '100%', background: '#111113', border: '1px solid #7C3AED', borderRadius: 4, padding: '2px 6px', color: '#F1F0F5', fontSize: 11, outline: 'none' }} />
+                          style={{ width: '100%', background: 'var(--studio-surface)', border: '1px solid #7C3AED', borderRadius: 4, padding: '2px 6px', color: 'var(--studio-text)', fontSize: 11, outline: 'none' }} />
                       ) : (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
                           {/* Batch job status dot (EccoAPI background generation) */}
@@ -1336,14 +1495,14 @@ function StudioCanvas() {
                               <div style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, boxShadow: `0 0 4px ${dotColor}`, flexShrink: 0, animation: st === 'polling' ? 'pulse 1s infinite' : 'none' }} title={st === 'polling' ? 'Generating…' : st === 'error' ? 'Error' : 'Done'} />
                             );
                           })()}
-                          <span style={{ flex: 1, fontSize: 11, color: b.id === activeBatchId ? '#F1F0F5' : '#9090A8', fontWeight: b.id === activeBatchId ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
-                          <button onClick={e => { e.stopPropagation(); setRenamingId(b.id); setRenameVal(b.name); }} style={{ background: 'none', border: 'none', color: '#55556A', cursor: 'pointer', padding: '0 2px', fontSize: 11 }} title="Rename">✎</button>
+                          <span style={{ flex: 1, fontSize: 11, color: b.id === activeBatchId ? 'var(--studio-text)' : 'var(--studio-text-sec)', fontWeight: b.id === activeBatchId ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+                          <button onClick={e => { e.stopPropagation(); setRenamingId(b.id); setRenameVal(b.name); }} style={{ background: 'none', border: 'none', color: 'var(--studio-text-muted)', cursor: 'pointer', padding: '0 2px', fontSize: 11 }} title="Rename">✎</button>
                           {batches.length > 1 && (
-                            <button onClick={e => { e.stopPropagation(); deleteBatch(b.id, nodes, edges); }} style={{ background: 'none', border: 'none', color: '#55556A', cursor: 'pointer', padding: '0 2px', fontSize: 11 }} title="Delete">✕</button>
+                            <button onClick={e => { e.stopPropagation(); deleteBatch(b.id, nodes, edges); }} style={{ background: 'none', border: 'none', color: 'var(--studio-text-muted)', cursor: 'pointer', padding: '0 2px', fontSize: 11 }} title="Delete">✕</button>
                           )}
                         </div>
                       )}
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 3 }}>{new Date(b.createdAt).toLocaleDateString()} · {b.generatedImages.length} images</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 3 }}>{new Date(b.createdAt).toLocaleDateString()} · {b.generatedImages.length} images</p>
                     </div>
                   ))}
                 </>
@@ -1352,13 +1511,13 @@ function StudioCanvas() {
               {/* ── Assets tab ── */}
               {leftTab === 'assets' && (
                 assetsList.length === 0
-                  ? <p style={{ fontSize: 11, color: '#55556A', lineHeight: 1.6 }}>No saved reference images yet. Upload one using an Image Reference node.</p>
+                  ? <p style={{ fontSize: 11, color: 'var(--studio-text-muted)', lineHeight: 1.6 }}>No saved reference images yet. Upload one using an Image Reference node.</p>
                   : assetsList.map(a => (
                       <div key={a.id}
                         draggable
                         onDragStart={e => { e.dataTransfer.setData('application/json', JSON.stringify(a)); e.dataTransfer.effectAllowed = 'copy'; }}
                         onClick={() => handleSelectAsset(a.id)}
-                        style={{ background: selectedAssetId === a.id ? '#1E1E2A' : '#1A1A1F', border: `1px solid ${selectedAssetId === a.id ? '#7C3AED88' : '#0D948840'}`, borderRadius: 8, padding: 8, marginBottom: 8, cursor: 'pointer', transition: 'border-color 0.15s' }}>
+                        style={{ background: selectedAssetId === a.id ? '#1E1E2A' : 'var(--studio-elevated)', border: `1px solid ${selectedAssetId === a.id ? 'color-mix(in srgb, var(--studio-accent) 53%, transparent)' : '#0D948840'}`, borderRadius: 8, padding: 8, marginBottom: 8, cursor: 'pointer', transition: 'border-color 0.15s' }}>
                         <div style={{ position: 'relative', marginBottom: 5 }}>
                           <img src={a.url} alt={a.name} draggable={false} style={{ width: '100%', height: 70, objectFit: 'cover', borderRadius: 5, display: 'block' }} />
                           {/* Open / Remove overlay */}
@@ -1368,7 +1527,7 @@ function StudioCanvas() {
                             style={{ position: 'absolute', inset: 0, borderRadius: 5, background: 'rgba(10,10,11,0.82)', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'opacity 0.15s' }}
                           >
                             <button onClick={e => { e.stopPropagation(); setModalImageUrl(a.url); }}
-                              style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: 'none', background: '#7C3AED', color: '#fff', cursor: 'pointer' }}>
+                              style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: 'none', background: 'var(--studio-accent)', color: '#fff', cursor: 'pointer' }}>
                               Open
                             </button>
                             <button onClick={e => { e.stopPropagation(); handleRemoveAsset(a.id); }}
@@ -1377,7 +1536,7 @@ function StudioCanvas() {
                             </button>
                           </div>
                         </div>
-                        <p style={{ fontSize: 11, color: '#F1F0F5', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</p>
+                        <p style={{ fontSize: 11, color: 'var(--studio-text)', marginBottom: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.name}</p>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
                           {a.tags.map(t => (
                             <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 20, background: '#0D948818', color: '#0D9488', border: '1px solid #0D948840' }}>{t}</span>
@@ -1391,10 +1550,10 @@ function StudioCanvas() {
               {leftTab === 'library' && (
                 <>
                   {/* Sub-tabs: Local / Hosted */}
-                  <div style={{ display: 'flex', marginBottom: 10, borderBottom: '1px solid #2A2A35' }}>
+                  <div style={{ display: 'flex', marginBottom: 10, borderBottom: '1px solid var(--studio-border)' }}>
                     {(['local', 'hosted'] as const).map(sub => (
                       <button key={sub} onClick={() => setLibrarySubTab(sub)}
-                        style={{ flex: 1, padding: '6px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', background: 'transparent', color: librarySubTab === sub ? '#F1F0F5' : '#55556A', borderBottom: librarySubTab === sub ? '2px solid #0D9488' : '2px solid transparent', textTransform: 'capitalize' }}>
+                        style={{ flex: 1, padding: '6px 4px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer', background: 'transparent', color: librarySubTab === sub ? 'var(--studio-text)' : 'var(--studio-text-muted)', borderBottom: librarySubTab === sub ? '2px solid #0D9488' : '2px solid transparent', textTransform: 'capitalize' }}>
                         {sub === 'hosted' ? '☁ Hosted' : '⬡ Local'}
                       </button>
                     ))}
@@ -1404,7 +1563,7 @@ function StudioCanvas() {
                       librarySubTab === 'hosted' ? img.source === 'supabase' : img.source !== 'supabase'
                     );
                     if (filtered.length === 0) return (
-                      <p style={{ fontSize: 11, color: '#55556A', lineHeight: 1.6 }}>
+                      <p style={{ fontSize: 11, color: 'var(--studio-text-muted)', lineHeight: 1.6 }}>
                         {librarySubTab === 'hosted'
                           ? 'No hosted images yet. Use ☁ Supabase to upload generated images.'
                           : 'Generated images appear here. Click ⊕ on any output node to save.'}
@@ -1413,7 +1572,7 @@ function StudioCanvas() {
                     return filtered.map(img => (
                       <div key={img.id}
                         onClick={() => { setSelectedLibImgId(img.id); setSelectedNodeId(null); setSelectedNodeType(null); setSelectedAssetId(null); }}
-                        style={{ marginBottom: 8, cursor: 'pointer', borderRadius: 8, border: `1px solid ${selectedLibImgId === img.id ? '#7C3AED88' : 'transparent'}`, padding: 4 }}>
+                        style={{ marginBottom: 8, cursor: 'pointer', borderRadius: 8, border: `1px solid ${selectedLibImgId === img.id ? 'color-mix(in srgb, var(--studio-accent) 53%, transparent)' : 'transparent'}`, padding: 4 }}>
                         <div style={{ position: 'relative' }}>
                           <img src={librarySubTab === 'hosted' && img.supabaseUrl ? img.supabaseUrl : img.url} alt="generated" style={{ width: '100%', borderRadius: 5, display: 'block' }} />
                           {librarySubTab === 'hosted' && (
@@ -1425,7 +1584,7 @@ function StudioCanvas() {
                             style={{ position: 'absolute', inset: 0, borderRadius: 5, background: 'rgba(10,10,11,0.82)', display: 'flex', gap: 5, alignItems: 'center', justifyContent: 'center', opacity: 0, transition: 'opacity 0.15s' }}
                           >
                             <button onClick={e => { e.stopPropagation(); setModalImageUrl(librarySubTab === 'hosted' && img.supabaseUrl ? img.supabaseUrl : img.url); }}
-                              style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: 'none', background: '#7C3AED', color: '#fff', cursor: 'pointer' }}>
+                              style={{ fontSize: 11, fontWeight: 600, padding: '4px 10px', borderRadius: 5, border: 'none', background: 'var(--studio-accent)', color: '#fff', cursor: 'pointer' }}>
                               Open
                             </button>
                             <button onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(img.prompt); }}
@@ -1438,8 +1597,8 @@ function StudioCanvas() {
                             </button>
                           </div>
                         </div>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.prompt.slice(0, 55)}{img.prompt.length > 55 ? '…' : ''}</p>
-                        <p style={{ fontSize: 9, color: '#55556A' }}>{new Date(img.createdAt).toLocaleString()}</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{img.prompt.slice(0, 55)}{img.prompt.length > 55 ? '…' : ''}</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)' }}>{new Date(img.createdAt).toLocaleString()}</p>
                       </div>
                     ));
                   })()}
@@ -1451,7 +1610,7 @@ function StudioCanvas() {
           {/* ── Canvas area ── */}
           <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
             {/* Toolbar */}
-            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: '#111113', borderBottom: '1px solid #2A2A35', flexWrap: 'wrap' }}>
+            <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: 'var(--studio-surface)', borderBottom: '1px solid var(--studio-border)', flexWrap: 'wrap' }}>
               <TB onClick={addUploadNode}>+ Image Reference</TB>
               <TB onClick={addPromptNode}>+ Image Prompt</TB>
               <Div />
@@ -1460,14 +1619,15 @@ function StudioCanvas() {
                 onClick={() => setLockCarouselNodes(v => !v)}
                 title={lockCarouselNodes ? 'Unlock carousel nodes (move independently)' : 'Lock carousel nodes (move together)'}
                 style={{
-                  padding: '4px 9px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: `1px solid ${lockCarouselNodes ? '#F59E0B44' : '#2A2A35'}`,
-                  background: lockCarouselNodes ? '#F59E0B22' : '#111113', color: lockCarouselNodes ? '#F59E0B' : '#55556A',
+                  padding: '4px 9px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: `1px solid ${lockCarouselNodes ? '#F59E0B44' : 'var(--studio-border)'}`,
+                  background: lockCarouselNodes ? '#F59E0B22' : 'var(--studio-surface)', color: lockCarouselNodes ? '#F59E0B' : 'var(--studio-text-muted)',
                   cursor: 'pointer', whiteSpace: 'nowrap',
                 }}>
                 {lockCarouselNodes ? '⛓ Locked' : '⛓ Lock Slides'}
               </button>
               <Div />
               <TB onClick={addModelNode} coral>+ Model Creation</TB>
+              <TB onClick={addSettingNode} accent>+ Setting / BG Plate</TB>
               <Div />
               <TB onClick={handleExportCanvas}>{isExporting ? 'Exporting…' : '↓ Canvas PNG'}</TB>
               {libraryImages.length > 0 && <TB onClick={handleDownloadAll}>↓ Library ZIP</TB>}
@@ -1477,7 +1637,7 @@ function StudioCanvas() {
                 </TB>
               )}
               {activeBatch?.batchType === 'automated' && (
-                <span style={{ fontSize: 9, color: '#7C3AED', fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: '#7C3AED11', border: '1px solid #7C3AED44', marginLeft: 4 }}>
+                <span style={{ fontSize: 9, color: 'var(--studio-accent)', fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: 'color-mix(in srgb, var(--studio-accent) 7%, transparent)', border: '1px solid color-mix(in srgb, var(--studio-accent) 27%, transparent)', marginLeft: 4 }}>
                   ⚡ Automated
                 </span>
               )}
@@ -1492,12 +1652,13 @@ function StudioCanvas() {
                   onPaneClick={onPaneClick} onNodeContextMenu={onNodeContextMenu}
                   nodeTypes={nodeTypes} edgeTypes={edgeTypes}
                   fitView fitViewOptions={{ padding: 0.15 }}
+                  minZoom={0.05} maxZoom={8}
                   connectionRadius={60}
                   attributionPosition="bottom-right"
                 >
-                  <Background variant={BackgroundVariant.Dots} color="#2A2A35" gap={24} size={1} />
-                  <Controls style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
-                  <MiniMap nodeColor={() => '#7C3AED'} maskColor="rgba(10,10,11,0.75)" style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 8 }} />
+                  <Background variant={BackgroundVariant.Dots} color="var(--studio-dot)" gap={24} size={1} />
+                  <Controls />
+                  <MiniMap nodeColor={() => 'var(--studio-accent)'} maskColor="var(--studio-minimap-mask)" />
                 </ReactFlow>
               </ErrorBoundary>
             </div>
@@ -1507,32 +1668,32 @@ function StudioCanvas() {
               <div onClick={() => setCarouselPicker(p => ({ ...p, visible: false }))}
                 style={{ position: 'absolute', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(4px)' }}>
                 <div onClick={e => e.stopPropagation()}
-                  style={{ background: '#111113', border: '1px solid #2A2A35', borderRadius: 14, padding: 28, width: 360, boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: '#F1F0F5', marginBottom: 6 }}>How many slides?</p>
-                  <p style={{ fontSize: 11, color: '#55556A', marginBottom: 20, lineHeight: 1.6 }}>
+                  style={{ background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', borderRadius: 14, padding: 28, width: 360, boxShadow: '0 20px 50px rgba(0,0,0,0.7)' }}>
+                  <p style={{ fontSize: 14, fontWeight: 700, color: 'var(--studio-text)', marginBottom: 6 }}>How many slides?</p>
+                  <p style={{ fontSize: 11, color: 'var(--studio-text-muted)', marginBottom: 20, lineHeight: 1.6 }}>
                     Creates a single carousel node with {carouselPicker.count} prompt slots and {carouselPicker.count} connected output nodes.
                   </p>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 18 }}>
                     <button onClick={() => setCarouselPicker(p => ({ ...p, count: Math.max(2, p.count - 1) }))}
-                      style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid #2A2A35', background: '#1A1A1F', color: '#9090A8', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
+                      style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid var(--studio-border)', background: 'var(--studio-elevated)', color: 'var(--studio-text-sec)', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>−</button>
                     <div style={{ flex: 1, textAlign: 'center' }}>
-                      <span style={{ fontSize: 38, fontWeight: 800, color: '#7C3AED' }}>{carouselPicker.count}</span>
-                      <p style={{ fontSize: 10, color: '#55556A', margin: 0 }}>slides</p>
+                      <span style={{ fontSize: 38, fontWeight: 800, color: 'var(--studio-accent)' }}>{carouselPicker.count}</span>
+                      <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', margin: 0 }}>slides</p>
                     </div>
                     <button onClick={() => setCarouselPicker(p => ({ ...p, count: Math.min(20, p.count + 1) }))}
-                      style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid #2A2A35', background: '#1A1A1F', color: '#9090A8', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
+                      style={{ width: 34, height: 34, borderRadius: 8, border: '1px solid var(--studio-border)', background: 'var(--studio-elevated)', color: 'var(--studio-text-sec)', fontSize: 20, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>+</button>
                   </div>
                   <div style={{ display: 'flex', gap: 5, marginBottom: 18, flexWrap: 'wrap' }}>
                     {[3, 4, 5, 6, 8, 10, 12].map(n => (
                       <button key={n} onClick={() => setCarouselPicker(p => ({ ...p, count: n }))}
-                        style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: `1px solid ${carouselPicker.count === n ? '#7C3AED' : '#2A2A35'}`, background: carouselPicker.count === n ? '#7C3AED' : '#1A1A1F', color: carouselPicker.count === n ? '#fff' : '#9090A8' }}>
+                        style={{ padding: '3px 10px', borderRadius: 20, fontSize: 11, cursor: 'pointer', border: `1px solid ${carouselPicker.count === n ? 'var(--studio-accent)' : 'var(--studio-border)'}`, background: carouselPicker.count === n ? 'var(--studio-accent)' : 'var(--studio-elevated)', color: carouselPicker.count === n ? '#fff' : 'var(--studio-text-sec)' }}>
                         {n}
                       </button>
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setCarouselPicker(p => ({ ...p, visible: false }))}
-                      style={{ flex: 1, padding: '9px', borderRadius: 8, border: '1px solid #2A2A35', background: '#1A1A1F', color: '#9090A8', fontSize: 12, cursor: 'pointer' }}>
+                      style={{ flex: 1, padding: '9px', borderRadius: 8, border: '1px solid var(--studio-border)', background: 'var(--studio-elevated)', color: 'var(--studio-text-sec)', fontSize: 12, cursor: 'pointer' }}>
                       Cancel
                     </button>
                     <button onClick={() => createCarouselNode(carouselPicker.count)}
@@ -1546,7 +1707,7 @@ function StudioCanvas() {
           </main>
 
           {/* ── Right panel (context-sensitive) ── */}
-          <aside style={{ width: 250, flexShrink: 0, background: '#111113', borderLeft: '1px solid #2A2A35', overflowY: 'auto', padding: 14 }}>
+          <aside style={{ width: 250, flexShrink: 0, background: 'var(--studio-surface)', borderLeft: '1px solid var(--studio-border)', overflowY: 'auto', padding: 14 }}>
 
             {/* ── Asset editor ── */}
             {selectedAssetId && leftTab === 'assets' && (() => {
@@ -1558,12 +1719,12 @@ function StudioCanvas() {
                   <img src={asset.url} alt={asset.name} style={{ width: '100%', borderRadius: 7, marginBottom: 10, display: 'block' }} />
                   <Sec label="Name">
                     <input value={editAssetName} onChange={e => setEditAssetName(e.target.value)}
-                      style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                      style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
                   </Sec>
                   <Sec label="Tags (comma-separated)">
                     <textarea rows={3} value={editAssetTags} onChange={e => setEditAssetTags(e.target.value)}
                       placeholder="earbuds, white, pro-2, stem-style"
-                      style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                      style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3, marginTop: 5 }}>
                       {editAssetTags.split(',').map(t => t.trim().toLowerCase()).filter(Boolean).map(t => (
                         <span key={t} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 20, background: '#0D948818', color: '#0D9488', border: '1px solid #0D948840' }}>{t}</span>
@@ -1572,13 +1733,13 @@ function StudioCanvas() {
                   </Sec>
                   <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
                     <button onClick={handleSaveAsset} disabled={isSavingAsset}
-                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 700, borderRadius: 6, border: 'none', background: isSavingAsset ? '#2A2A35' : 'linear-gradient(135deg,#7C3AED,#0D9488)', color: isSavingAsset ? '#55556A' : '#fff', cursor: isSavingAsset ? 'not-allowed' : 'pointer' }}>
+                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 700, borderRadius: 6, border: 'none', background: isSavingAsset ? 'var(--studio-border)' : 'linear-gradient(135deg,#7C3AED,#0D9488)', color: isSavingAsset ? 'var(--studio-text-muted)' : '#fff', cursor: isSavingAsset ? 'not-allowed' : 'pointer' }}>
                       {isSavingAsset ? 'Saving…' : 'Save Changes'}
                     </button>
                   </div>
                   <div style={{ display: 'flex', gap: 5 }}>
                     <button onClick={() => setModalImageUrl(asset.url)}
-                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: '1px solid #7C3AED44', background: '#7C3AED11', color: '#7C3AED', cursor: 'pointer' }}>
+                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: '1px solid color-mix(in srgb, var(--studio-accent) 27%, transparent)', background: 'color-mix(in srgb, var(--studio-accent) 7%, transparent)', color: 'var(--studio-accent)', cursor: 'pointer' }}>
                       Open Image
                     </button>
                     <button onClick={() => handleRemoveAsset(asset.id)}
@@ -1599,14 +1760,14 @@ function StudioCanvas() {
                   <SideLabel>Generated Image</SideLabel>
                   <img src={img.url} alt="generated" style={{ width: '100%', borderRadius: 7, marginBottom: 10, display: 'block' }} />
                   <Sec label="Prompt">
-                    <p style={{ fontSize: 10, color: '#9090A8', lineHeight: 1.6 }}>{img.prompt}</p>
+                    <p style={{ fontSize: 10, color: 'var(--studio-text-sec)', lineHeight: 1.6 }}>{img.prompt}</p>
                   </Sec>
                   <Sec label="Created">
-                    <p style={{ fontSize: 10, color: '#55556A' }}>{new Date(img.createdAt).toLocaleString()}</p>
+                    <p style={{ fontSize: 10, color: 'var(--studio-text-muted)' }}>{new Date(img.createdAt).toLocaleString()}</p>
                   </Sec>
                   <div style={{ display: 'flex', gap: 5 }}>
                     <button onClick={() => setModalImageUrl(img.url)}
-                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: '1px solid #7C3AED44', background: '#7C3AED11', color: '#7C3AED', cursor: 'pointer' }}>
+                      style={{ flex: 1, padding: '6px', fontSize: 10, fontWeight: 600, borderRadius: 6, border: '1px solid color-mix(in srgb, var(--studio-accent) 27%, transparent)', background: 'color-mix(in srgb, var(--studio-accent) 7%, transparent)', color: 'var(--studio-accent)', cursor: 'pointer' }}>
                       Open Image
                     </button>
                     <button onClick={() => { removeFromGlobalLibrary(img.id); setSelectedLibImgId(null); }}
@@ -1625,15 +1786,15 @@ function StudioCanvas() {
               <>
                 <SideLabel>Image Reference Settings</SideLabel>
                 <Sec label="Node">
-                  <p style={{ fontSize: 11, color: '#9090A8' }}>
+                  <p style={{ fontSize: 11, color: 'var(--studio-text-sec)' }}>
                     {(selectedNode?.data as { savedImage?: SavedImage })?.savedImage
                       ? `Saved as "${(selectedNode?.data as { savedImage: SavedImage }).savedImage.name}"`
                       : 'Not saved yet'}
                   </p>
-                  <p style={{ fontSize: 10, color: '#55556A', marginTop: 5 }}>Upload the image on the node, add tags that describe the product (e.g. earbuds, white, pro-2), then click Save Reference.</p>
+                  <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', marginTop: 5 }}>Upload the image on the node, add tags that describe the product (e.g. earbuds, white, pro-2), then click Save Reference.</p>
                 </Sec>
                 <Sec label="Tag Tips">
-                  <p style={{ fontSize: 10, color: '#55556A', lineHeight: 1.6 }}>Tags are matched against prompt text. Use descriptive single words: <span style={{ color: '#0D9488' }}>earbuds, white, charging-case, red, stem-style</span></p>
+                  <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', lineHeight: 1.6 }}>Tags are matched against prompt text. Use descriptive single words: <span style={{ color: '#0D9488' }}>earbuds, white, charging-case, red, stem-style</span></p>
                 </Sec>
               </>
             )}
@@ -1641,13 +1802,40 @@ function StudioCanvas() {
             {!selectedAssetId && !selectedLibImgId && selectedNodeType === 'promptNode' && (
               <>
                 <SideLabel>Image Prompt Settings</SideLabel>
+                <Sec label="⚡ Paste API Config">
+                  <textarea
+                    rows={4}
+                    placeholder={'Paste Agent 5 output here:\n{ "temperature": 1.0, "top_k": 40,\n  "seed": 67, "top_p": 0.97 }'}
+                    onPaste={e => {
+                      const text = e.clipboardData.getData('text');
+                      const temp = (() => { const m = /temperature["']?\s*:\s*([\d.]+)/i.exec(text); return m ? parseFloat(m[1]) : undefined; })();
+                      const topP = (() => { const m = /top[_\s-]?p["']?\s*:\s*([\d.]+)/i.exec(text); return m ? parseFloat(m[1]) : undefined; })();
+                      const topK = (() => { const m = /top[_\s-]?k["']?\s*:\s*([\d.]+)/i.exec(text); return m ? Math.round(parseFloat(m[1])) : undefined; })();
+                      const seed = (() => { const m = /seed["']?\s*:\s*([\d]+)/i.exec(text); return m ? parseInt(m[1], 10) : undefined; })();
+                      const modelM = /"?model"?\s*:\s*["']?([^"',}\s]+)["']?/i.exec(text);
+                      const model = modelM?.[1]?.includes('pro') ? 'Pro' : modelM?.[1]?.includes('standard') ? 'Standard' : modelM?.[1] ? 'Flash' : undefined;
+                      if (temp  !== undefined) setSetting('temperature', temp);
+                      if (topP  !== undefined) setSetting('topP', topP);
+                      if (topK  !== undefined) setSetting('topK', topK);
+                      if (seed  !== undefined) setSetting('seed', seed);
+                      if (model !== undefined) setSetting('model', model);
+                    }}
+                    style={{
+                      width: '100%', background: '#0D0D0F', border: '1px solid #0D948844',
+                      borderRadius: 6, padding: '6px 8px', color: 'var(--studio-text-sec)', fontSize: 10,
+                      outline: 'none', resize: 'none', boxSizing: 'border-box',
+                      fontFamily: 'monospace', lineHeight: 1.5,
+                    }}
+                  />
+                  <p style={{ fontSize: 9, color: '#0D9488', marginTop: 4 }}>Paste the JSON block from Agent 5 — temperature, top_p, top_k, seed, model auto-fill instantly</p>
+                </Sec>
                 <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
                   <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models — lower values degrade reference adherence</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Google recommends 1.0 for image models — lower values degrade reference adherence</p>
                 </Sec>
                 <Sec label={`Guidance Scale — ${settingsOf.guidanceScale ?? 7}`}>
                   <SliderRow value={settingsOf.guidanceScale ?? 7} min={1} max={15} step={1} onChange={v => setSetting('guidanceScale', v)} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Higher = follows prompt more strictly</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Higher = follows prompt more strictly</p>
                 </Sec>
                 <Sec label="Safety Threshold">
                   <Chips opts={['Off', 'Low Block', 'Medium', 'High Block']} value={
@@ -1660,12 +1848,12 @@ function StudioCanvas() {
                     v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
                                         'BLOCK_MEDIUM_AND_ABOVE'
                   )} cols={2} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
                 </Sec>
                 <Sec label="Thinking Mode">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                    <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves reference adherence)</span>
+                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                    <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable (improves reference adherence)</span>
                   </label>
                 </Sec>
                 <Sec label="Media Resolution">
@@ -1675,16 +1863,17 @@ function StudioCanvas() {
                   } onChange={v => setSetting('mediaResolution',
                     v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
                   )} cols={3} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>High = more input tokens for reference image details</p>
                 </Sec>
                 <Sec label="Seed (empty = random)">
-                  <input type="text" placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value)}
-                    style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                  <input type="number" min={0} step={1} placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+                    style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Variants: +1 minor pose, +2 hair/wind, +7 background, +13 lighting</p>
                 </Sec>
                 <Sec label="Negative Prompt">
                   <textarea rows={3} value={settingsOf.negativePrompt ?? ''} onChange={e => setSetting('negativePrompt', e.target.value)}
                     placeholder="blur, noise, artifacts, low quality…"
-                    style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                    style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
                 </Sec>
                 {activeProvider === 'ecco' ? (
                   <>
@@ -1696,48 +1885,48 @@ function StudioCanvas() {
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                     <Sec label="Async Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use async queue (off = sync)</span>
                       </label>
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                     </Sec>
                   </>
                 ) : activeProvider === 'pudding' ? (
                   <>
                     <Sec label="Model">
                       <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
                     </Sec>
                     <Sec label="Image Size">
                       <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
                     </Sec>
                     <Sec label="Streaming Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                         <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                       </label>
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                     {settingsOf.useGoogleSearch && (
                       <Sec label="Image Search">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Include image results</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
                       </Sec>
                     )}
                   </>
@@ -1745,7 +1934,7 @@ function StudioCanvas() {
                   <>
                     <Sec label="Model">
                       <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
                     </Sec>
                     <Sec label="Image Size">
                       <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
@@ -1753,33 +1942,37 @@ function StudioCanvas() {
                     <Sec label={`Top-P — ${(settingsOf.topP ?? 1).toFixed(2)}`}>
                       <SliderRow value={settingsOf.topP ?? 1} min={0} max={1} step={0.01} onChange={v => setSetting('topP', v)} />
                     </Sec>
+                    <Sec label={`Top-K — ${settingsOf.topK ?? 40}`}>
+                      <SliderRow value={settingsOf.topK ?? 40} min={1} max={100} step={1} onChange={v => setSetting('topK', v)} />
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Vocabulary breadth — beach/lifestyle: 40 · studio: 30 · urban: 50</p>
+                    </Sec>
                     <Sec label="Streaming Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                         <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                       </label>
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get timeout errors — keeps the connection alive during long generations</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Enable if you get timeout errors — keeps the connection alive during long generations</p>
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                     {settingsOf.useGoogleSearch && (
                       <Sec label="Image Search">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Include image results</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
                       </Sec>
                     )}
                   </>
                 )}
                 <Sec label="Generation Count">
                   <Chips opts={['1', '2', '3', '4']} value={String(settingsOf.count ?? 1)} onChange={v => setSetting('count', Number(v))} cols={4} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Creates extra output nodes as needed</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Creates extra output nodes as needed</p>
                 </Sec>
                 <Sec label="Provider Override">
                   <Chips
@@ -1788,7 +1981,7 @@ function StudioCanvas() {
                     onChange={v => setSetting('providerOverride', v === 'Inherit' ? undefined : v === 'EccoAPI' ? 'ecco' : v.toLowerCase() as 'gemini' | 'pudding')}
                     cols={2}
                   />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Force this node to use a specific provider — overrides the global toolbar toggle</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Force this node to use a specific provider — overrides the global toolbar toggle</p>
                 </Sec>
                 {/* Prompt history */}
                 {(() => {
@@ -1798,14 +1991,14 @@ function StudioCanvas() {
                   return (
                     <Sec label="Generation History">
                       {history.map((h, i) => (
-                        <div key={i} style={{ background: '#0D0D0F', border: '1px solid #2A2A35', borderRadius: 6, padding: '6px 8px', marginBottom: 5 }}>
-                          <p style={{ fontSize: 10, color: '#9090A8', lineHeight: 1.5, marginBottom: 4 }}>{h.prompt.slice(0, 90)}{h.prompt.length > 90 ? '…' : ''}</p>
+                        <div key={i} style={{ background: '#0D0D0F', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '6px 8px', marginBottom: 5 }}>
+                          <p style={{ fontSize: 10, color: 'var(--studio-text-sec)', lineHeight: 1.5, marginBottom: 4 }}>{h.prompt.slice(0, 90)}{h.prompt.length > 90 ? '…' : ''}</p>
                           <div style={{ display: 'flex', gap: 4 }}>
                             <button onClick={() => navigator.clipboard.writeText(h.prompt)}
-                              style={{ flex: 1, padding: '3px 0', fontSize: 9, fontWeight: 600, borderRadius: 4, border: '1px solid #2A2A35', background: '#1A1A1F', color: '#9090A8', cursor: 'pointer' }}>
+                              style={{ flex: 1, padding: '3px 0', fontSize: 9, fontWeight: 600, borderRadius: 4, border: '1px solid var(--studio-border)', background: 'var(--studio-elevated)', color: 'var(--studio-text-sec)', cursor: 'pointer' }}>
                               Copy
                             </button>
-                            <p style={{ fontSize: 8, color: '#55556A', lineHeight: '22px', margin: 0 }}>{new Date(h.ts).toLocaleTimeString()}</p>
+                            <p style={{ fontSize: 8, color: 'var(--studio-text-muted)', lineHeight: '22px', margin: 0 }}>{new Date(h.ts).toLocaleTimeString()}</p>
                           </div>
                         </div>
                       ))}
@@ -1822,12 +2015,39 @@ function StudioCanvas() {
                 <>
                   <SideLabel>Carousel Settings</SideLabel>
                   <Sec label="Slides">
-                    <p style={{ fontSize: 11, color: '#9090A8' }}>{slides.length} slides · {slides.filter(s => s.prompt.trim()).length} filled</p>
-                    <p style={{ fontSize: 10, color: '#55556A', marginTop: 4, lineHeight: 1.5 }}>Settings below apply to all slides in this carousel.</p>
+                    <p style={{ fontSize: 11, color: 'var(--studio-text-sec)' }}>{slides.length} slides · {slides.filter(s => s.prompt.trim()).length} filled</p>
+                    <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', marginTop: 4, lineHeight: 1.5 }}>Settings below apply to all slides in this carousel.</p>
+                  </Sec>
+                  <Sec label="⚡ Paste API Config">
+                    <textarea
+                      rows={4}
+                      placeholder={'Paste Agent 5 output here:\n{ "temperature": 1.0, "top_k": 40,\n  "seed": 67, "top_p": 0.97 }'}
+                      onPaste={e => {
+                        const text = e.clipboardData.getData('text');
+                        const temp = (() => { const m = /temperature["']?\s*:\s*([\d.]+)/i.exec(text); return m ? parseFloat(m[1]) : undefined; })();
+                        const topP = (() => { const m = /top[_\s-]?p["']?\s*:\s*([\d.]+)/i.exec(text); return m ? parseFloat(m[1]) : undefined; })();
+                        const topK = (() => { const m = /top[_\s-]?k["']?\s*:\s*([\d.]+)/i.exec(text); return m ? Math.round(parseFloat(m[1])) : undefined; })();
+                        const seed = (() => { const m = /seed["']?\s*:\s*([\d]+)/i.exec(text); return m ? parseInt(m[1], 10) : undefined; })();
+                        const modelM = /"?model"?\s*:\s*["']?([^"',}\s]+)["']?/i.exec(text);
+                        const model = modelM?.[1]?.includes('pro') ? 'Pro' : modelM?.[1]?.includes('standard') ? 'Standard' : modelM?.[1] ? 'Flash' : undefined;
+                        if (temp  !== undefined) setSetting('temperature', temp);
+                        if (topP  !== undefined) setSetting('topP', topP);
+                        if (topK  !== undefined) setSetting('topK', topK);
+                        if (seed  !== undefined) setSetting('seed', seed);
+                        if (model !== undefined) setSetting('model', model);
+                      }}
+                      style={{
+                        width: '100%', background: '#0D0D0F', border: '1px solid #0D948844',
+                        borderRadius: 6, padding: '6px 8px', color: 'var(--studio-text-sec)', fontSize: 10,
+                        outline: 'none', resize: 'none', boxSizing: 'border-box',
+                        fontFamily: 'monospace', lineHeight: 1.5,
+                      }}
+                    />
+                    <p style={{ fontSize: 9, color: '#0D9488', marginTop: 4 }}>Paste the JSON block from Agent 5 — applies to all slides</p>
                   </Sec>
                   <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
                     <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models</p>
+                    <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Google recommends 1.0 for image models</p>
                   </Sec>
                   <Sec label={`Guidance Scale — ${settingsOf.guidanceScale ?? 7}`}>
                     <SliderRow value={settingsOf.guidanceScale ?? 7} min={1} max={15} step={1} onChange={v => setSetting('guidanceScale', v)} />
@@ -1843,12 +2063,12 @@ function StudioCanvas() {
                       v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
                                           'BLOCK_MEDIUM_AND_ABOVE'
                     )} cols={2} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
+                    <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Lower = fewer false-positive blocks on safe product images</p>
                   </Sec>
                   <Sec label="Thinking Mode">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                      <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                      <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves reference adherence)</span>
+                      <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                      <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable (improves reference adherence)</span>
                     </label>
                   </Sec>
                   <Sec label="Media Resolution">
@@ -1858,16 +2078,17 @@ function StudioCanvas() {
                     } onChange={v => setSetting('mediaResolution',
                       v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
                     )} cols={3} />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
+                    <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>High = more input tokens for reference image details</p>
                   </Sec>
-                  <Sec label="Seed (empty = random)">
-                    <input type="text" placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value)}
-                      style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                  <Sec label="Seed (one seed for all slides)">
+                    <input type="number" min={0} step={1} placeholder="e.g. 42" value={settingsOf.seed ?? ''} onChange={e => setSetting('seed', e.target.value === '' ? undefined : parseInt(e.target.value, 10))}
+                      style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', boxSizing: 'border-box' }} />
+                    <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Same seed across all slides — thoughtSignature handles character consistency</p>
                   </Sec>
                   <Sec label="Negative Prompt">
                     <textarea rows={3} value={settingsOf.negativePrompt ?? ''} onChange={e => setSetting('negativePrompt', e.target.value)}
                       placeholder="blur, noise, artifacts…"
-                      style={{ width: '100%', background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 6, padding: '5px 8px', color: '#F1F0F5', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
+                      style={{ width: '100%', background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 6, padding: '5px 8px', color: 'var(--studio-text)', fontSize: 11, outline: 'none', resize: 'none', boxSizing: 'border-box', fontFamily: 'inherit', lineHeight: 1.5 }} />
                   </Sec>
                   {activeProvider === 'ecco' ? (
                     <>
@@ -1879,48 +2100,48 @@ function StudioCanvas() {
                       </Sec>
                       <Sec label="Google Search Grounding">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                         </label>
                       </Sec>
                       <Sec label="Async Mode">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                          <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use async queue (off = sync)</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping and reference image stripping in async queues</p>
                       </Sec>
                     </>
                   ) : activeProvider === 'pudding' ? (
                     <>
                       <Sec label="Model">
                         <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
                       </Sec>
                       <Sec label="Image Size">
                         <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
                       </Sec>
                       <Sec label="Streaming Mode">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                           <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                       </Sec>
                       <Sec label="Google Search Grounding">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                         </label>
                       </Sec>
                       {settingsOf.useGoogleSearch && (
                         <Sec label="Image Search">
                           <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                            <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                            <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Include image results</span>
                           </label>
-                          <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                          <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
                         </Sec>
                       )}
                     </>
@@ -1928,7 +2149,7 @@ function StudioCanvas() {
                     <>
                       <Sec label="Model">
                         <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
                       </Sec>
                       <Sec label="Image Size">
                         <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
@@ -1936,26 +2157,30 @@ function StudioCanvas() {
                       <Sec label={`Top-P — ${(settingsOf.topP ?? 1).toFixed(2)}`}>
                         <SliderRow value={settingsOf.topP ?? 1} min={0} max={1} step={0.01} onChange={v => setSetting('topP', v)} />
                       </Sec>
+                      <Sec label={`Top-K — ${settingsOf.topK ?? 40}`}>
+                        <SliderRow value={settingsOf.topK ?? 40} min={1} max={100} step={1} onChange={v => setSetting('topK', v)} />
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Vocabulary breadth — beach/lifestyle: 40 · studio: 30 · urban: 50</p>
+                      </Sec>
                       <Sec label="Streaming Mode">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                           <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get timeout errors on slow carousel generations</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Enable if you get timeout errors on slow carousel generations</p>
                       </Sec>
                       <Sec label="Google Search Grounding">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                          <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                         </label>
                       </Sec>
                       {settingsOf.useGoogleSearch && (
                         <Sec label="Image Search">
                           <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                            <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                            <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                            <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Include image results</span>
                           </label>
-                          <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                          <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
                         </Sec>
                       )}
                     </>
@@ -1967,7 +2192,7 @@ function StudioCanvas() {
                       onChange={v => setSetting('providerOverride', v === 'Inherit' ? undefined : v === 'EccoAPI' ? 'ecco' : v.toLowerCase() as 'gemini' | 'pudding')}
                       cols={2}
                     />
-                    <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Force this carousel to use a specific provider — overrides the global toolbar toggle</p>
+                    <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Force this carousel to use a specific provider — overrides the global toolbar toggle</p>
                   </Sec>
                 </>
               );
@@ -1991,7 +2216,7 @@ function StudioCanvas() {
                 <Sec label="Actions">
                   {(selectedNode?.data as { imageUrl?: string })?.imageUrl && (
                     <a href={(selectedNode?.data as { imageUrl: string }).imageUrl} download={`output-${Date.now()}.png`}
-                      style={{ display: 'block', textAlign: 'center', padding: '6px', borderRadius: 6, background: '#7C3AED', color: '#fff', fontSize: 11, fontWeight: 600, textDecoration: 'none', marginBottom: 6 }}>
+                      style={{ display: 'block', textAlign: 'center', padding: '6px', borderRadius: 6, background: 'var(--studio-accent)', color: '#fff', fontSize: 11, fontWeight: 600, textDecoration: 'none', marginBottom: 6 }}>
                       ↓ Download Image
                     </a>
                   )}
@@ -2003,11 +2228,11 @@ function StudioCanvas() {
               <>
                 <SideLabel>Model Creation Settings</SideLabel>
                 <Sec label="Output">
-                  <p style={{ fontSize: 10, color: '#55556A', lineHeight: 1.6 }}>Always outputs a single 16:9 composite image with 4 panels: front, 3/4 angle, side profile, and rear view of the model.</p>
+                  <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', lineHeight: 1.6 }}>Always outputs a single 16:9 composite image with 4 panels: front, 3/4 angle, side profile, and rear view of the model.</p>
                 </Sec>
                 <Sec label={`Temperature — ${(settingsOf.temperature ?? 1.0).toFixed(1)}`}>
                   <SliderRow value={settingsOf.temperature ?? 1.0} min={0} max={2} step={0.05} onChange={v => setSetting('temperature', v)} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Google recommends 1.0 for image models</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Google recommends 1.0 for image models</p>
                 </Sec>
                 <Sec label="Safety Threshold">
                   <Chips opts={['Off', 'Low Block', 'Medium', 'High Block']} value={
@@ -2020,12 +2245,12 @@ function StudioCanvas() {
                     v === 'High Block' ? 'BLOCK_LOW_AND_ABOVE' :
                                         'BLOCK_MEDIUM_AND_ABOVE'
                   )} cols={2} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Lower = fewer false-positive blocks on safe content</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Lower = fewer false-positive blocks on safe content</p>
                 </Sec>
                 <Sec label="Thinking Mode">
                   <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                    <span style={{ fontSize: 10, color: '#9090A8' }}>Enable (improves consistency)</span>
+                    <input type="checkbox" checked={settingsOf.includeThoughts !== false} onChange={e => setSetting('includeThoughts', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                    <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable (improves consistency)</span>
                   </label>
                 </Sec>
                 <Sec label="Media Resolution">
@@ -2035,7 +2260,7 @@ function StudioCanvas() {
                   } onChange={v => setSetting('mediaResolution',
                     v === 'Low' ? 'media_resolution_low' : v === 'Medium' ? 'media_resolution_medium' : 'media_resolution_high'
                   )} cols={3} />
-                  <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>High = more input tokens for reference image details</p>
+                  <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>High = more input tokens for reference image details</p>
                 </Sec>
                 {activeProvider === 'ecco' ? (
                   <>
@@ -2047,48 +2272,48 @@ function StudioCanvas() {
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                     <Sec label="Async Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use async queue (off = sync)</span>
+                        <input type="checkbox" checked={settingsOf.useAsync ?? false} onChange={e => setSetting('useAsync', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use async queue (off = sync)</span>
                       </label>
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping in async queues</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Sync mode (default) waits for the result directly — avoids model swapping in async queues</p>
                     </Sec>
                   </>
                 ) : activeProvider === 'pudding' ? (
                   <>
                     <Sec label="Model">
                       <Chips opts={['Flash', 'Pro']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={2} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = Nano banana 2 · Pro = Nano banana pro</p>
                     </Sec>
                     <Sec label="Image Size">
                       <Chips opts={['1K', '2K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={2} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>PuddingAPI bills per resolution — 4K not available</p>
                     </Sec>
                     <Sec label="Streaming Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                         <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#FB923C' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                       </label>
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Enable if you get 524 timeout errors — keeps Cloudflare connection alive during generation</p>
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                     {settingsOf.useGoogleSearch && (
                       <Sec label="Image Search">
                         <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                          <span style={{ fontSize: 10, color: '#9090A8' }}>Include image results</span>
+                          <input type="checkbox" checked={settingsOf.useImageSearch ?? false} onChange={e => setSetting('useImageSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                          <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Include image results</span>
                         </label>
-                        <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
+                        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Returns image bytes from web search (Flash Image model only)</p>
                       </Sec>
                     )}
                   </>
@@ -2096,7 +2321,7 @@ function StudioCanvas() {
                   <>
                     <Sec label="Model">
                       <Chips opts={['Flash', 'Pro', 'Standard']} value={settingsOf.model ?? 'Flash'} onChange={v => setSetting('model', v)} cols={3} />
-                      <p style={{ fontSize: 9, color: '#55556A', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
+                      <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 4 }}>Flash = gemini-3.1-flash-image-preview</p>
                     </Sec>
                     <Sec label="Image Size">
                       <Chips opts={['1K', '2K', '4K']} value={settingsOf.imageSize ?? '1K'} onChange={v => setSetting('imageSize', v)} cols={3} />
@@ -2107,13 +2332,13 @@ function StudioCanvas() {
                     <Sec label="Streaming Mode">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
                         <input type="checkbox" checked={settingsOf.useStreaming ?? false} onChange={e => setSetting('useStreaming', e.target.checked)} style={{ accentColor: '#0D9488' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Use SSE streaming</span>
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Use SSE streaming</span>
                       </label>
                     </Sec>
                     <Sec label="Google Search Grounding">
                       <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer' }}>
-                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: '#7C3AED' }} />
-                        <span style={{ fontSize: 10, color: '#9090A8' }}>Enable real-time search</span>
+                        <input type="checkbox" checked={settingsOf.useGoogleSearch ?? false} onChange={e => setSetting('useGoogleSearch', e.target.checked)} style={{ accentColor: 'var(--studio-accent)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--studio-text-sec)' }}>Enable real-time search</span>
                       </label>
                     </Sec>
                   </>
@@ -2128,7 +2353,7 @@ function StudioCanvas() {
                   <Chips opts={['Pure White', 'Light Gray', 'Gradient', 'Scene']} value={settingsOf.background ?? 'Pure White'} onChange={v => setSetting('background', v)} cols={2} />
                 </Sec>
                 <Sec label="How it works">
-                  <p style={{ fontSize: 10, color: '#55556A', lineHeight: 1.6 }}>This node is text-to-image only — no reference images. Describe the model in detail in the node's text area, then click "Create Model".</p>
+                  <p style={{ fontSize: 10, color: 'var(--studio-text-muted)', lineHeight: 1.6 }}>This node is text-to-image only — no reference images. Describe the model in detail in the node's text area, then click "Create Model".</p>
                 </Sec>
               </>
             )}
@@ -2146,7 +2371,7 @@ function StudioCanvas() {
             onClick={e => e.stopPropagation()}
             style={{
               position: 'fixed', top: contextMenu.y, left: contextMenu.x,
-              background: '#1A1A1F', border: '1px solid #2A2A35', borderRadius: 8,
+              background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', borderRadius: 8,
               padding: 4, zIndex: 201, minWidth: 140,
               boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
             }}
@@ -2156,8 +2381,8 @@ function StudioCanvas() {
               { label: 'Delete  Del', action: () => { onDeleteNode(contextMenu.nodeId); setContextMenu(null); }, red: true },
             ].map(item => (
               <button key={item.label} onClick={item.action}
-                style={{ display: 'block', width: '100%', padding: '7px 12px', fontSize: 11, textAlign: 'left', background: 'none', border: 'none', color: item.red ? '#F43F5E' : '#9090A8', cursor: 'pointer', borderRadius: 5 }}
-                onMouseEnter={e => (e.currentTarget.style.background = '#111113')}
+                style={{ display: 'block', width: '100%', padding: '7px 12px', fontSize: 11, textAlign: 'left', background: 'none', border: 'none', color: item.red ? '#F43F5E' : 'var(--studio-text-sec)', cursor: 'pointer', borderRadius: 5 }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--studio-surface)')}
                 onMouseLeave={e => (e.currentTarget.style.background = 'none')}
               >{item.label}</button>
             ))}
@@ -2188,22 +2413,22 @@ function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' 
   return (
     <>
       <SideLabel>Global Defaults</SideLabel>
-      <p style={{ fontSize: 11, color: '#55556A', lineHeight: 1.6, marginBottom: 12 }}>
+      <p style={{ fontSize: 11, color: 'var(--studio-text-muted)', lineHeight: 1.6, marginBottom: 12 }}>
         Click any node on the canvas to see and configure its settings here.
       </p>
       <Sec label="How to get started">
-        <ol style={{ paddingLeft: 14, color: '#9090A8', fontSize: 11, lineHeight: 1.8, margin: 0 }}>
-          <li>Add an <strong style={{ color: '#F1F0F5' }}>Image Reference</strong> node and upload a product photo with tags</li>
-          <li>Add an <strong style={{ color: '#F1F0F5' }}>Image Prompt</strong> node and write your scene description</li>
-          <li>Connect them with an edge, then hit <strong style={{ color: '#7C3AED' }}>Generate Slide</strong></li>
-          <li>View the result in the connected <strong style={{ color: '#F1F0F5' }}>Image Output</strong> node</li>
+        <ol style={{ paddingLeft: 14, color: 'var(--studio-text-sec)', fontSize: 11, lineHeight: 1.8, margin: 0 }}>
+          <li>Add an <strong style={{ color: 'var(--studio-text)' }}>Image Reference</strong> node and upload a product photo with tags</li>
+          <li>Add an <strong style={{ color: 'var(--studio-text)' }}>Image Prompt</strong> node and write your scene description</li>
+          <li>Connect them with an edge, then hit <strong style={{ color: 'var(--studio-accent)' }}>Generate Slide</strong></li>
+          <li>View the result in the connected <strong style={{ color: 'var(--studio-text)' }}>Image Output</strong> node</li>
         </ol>
       </Sec>
       <Sec label="Provider">
         <p style={{ fontSize: 11, color: activeProvider === 'ecco' ? '#A78BFA' : activeProvider === 'pudding' ? '#FB923C' : '#0D9488' }}>
           {activeProvider === 'ecco' ? 'EccoAPI (Nano Banana)' : activeProvider === 'pudding' ? 'PuddingAPI (Gemini-compatible)' : 'Google Gemini'}
         </p>
-        <p style={{ fontSize: 9, color: '#55556A', marginTop: 3 }}>
+        <p style={{ fontSize: 9, color: 'var(--studio-text-muted)', marginTop: 3 }}>
           {activeProvider === 'ecco' ? 'nk_live_... key configured' : activeProvider === 'pudding' ? 'PUDDING_API_KEY configured' : 'GEMINI_API_KEY configured'}
         </p>
       </Sec>
@@ -2215,8 +2440,8 @@ function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' 
           ['Right-click node', 'Context menu'],
         ].map(([k, d]) => (
           <div key={k} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
-            <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 3, background: '#1A1A1F', border: '1px solid #2A2A35', color: '#9090A8', fontFamily: 'monospace' }}>{k}</span>
-            <span style={{ fontSize: 9, color: '#55556A' }}>{d}</span>
+            <span style={{ fontSize: 9, padding: '2px 5px', borderRadius: 3, background: 'var(--studio-elevated)', border: '1px solid var(--studio-border)', color: 'var(--studio-text-sec)', fontFamily: 'monospace' }}>{k}</span>
+            <span style={{ fontSize: 9, color: 'var(--studio-text-muted)' }}>{d}</span>
           </div>
         ))}
       </Sec>
@@ -2226,27 +2451,27 @@ function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' 
 
 // ─── Micro helpers ────────────────────────────────────────────────────────────
 function TB({ onClick, children, accent, coral }: { onClick: () => void; children: React.ReactNode; accent?: boolean; coral?: boolean }) {
-  const bg    = accent ? '#7C3AED22' : coral ? '#F43F5E22' : '#1A1A1F';
-  const color = accent ? '#7C3AED'   : coral ? '#F43F5E'   : '#9090A8';
-  const border= accent ? '#7C3AED44' : coral ? '#F43F5E44' : '#2A2A35';
+  const bg    = accent ? 'color-mix(in srgb, var(--studio-accent) 13%, transparent)' : coral ? '#F43F5E22' : 'var(--studio-elevated)';
+  const color = accent ? 'var(--studio-accent)'   : coral ? '#F43F5E'   : 'var(--studio-text-sec)';
+  const border= accent ? 'color-mix(in srgb, var(--studio-accent) 27%, transparent)' : coral ? '#F43F5E44' : 'var(--studio-border)';
   return <button onClick={onClick} style={{ padding: '5px 11px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: `1px solid ${border}`, background: bg, color, cursor: 'pointer', whiteSpace: 'nowrap' }}>{children}</button>;
 }
-function Div() { return <div style={{ width: 1, height: 14, background: '#2A2A35', margin: '0 2px' }} />; }
+function Div() { return <div style={{ width: 1, height: 14, background: 'var(--studio-border)', margin: '0 2px' }} />; }
 function SideLabel({ children }: { children: React.ReactNode }) {
-  return <p style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: '#55556A', marginBottom: 12 }}>{children}</p>;
+  return <p style={{ fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', color: 'var(--studio-text-muted)', marginBottom: 12 }}>{children}</p>;
 }
 function Sec({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div style={{ marginBottom: 14 }}><p style={{ fontSize: 10, color: '#9090A8', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>{children}</div>;
+  return <div style={{ marginBottom: 14 }}><p style={{ fontSize: 10, color: 'var(--studio-text-sec)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</p>{children}</div>;
 }
 function SliderRow({ value, min, max, step, onChange }: { value: number; min: number; max: number; step: number; onChange: (v: number) => void }) {
-  return <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} style={{ width: '100%', accentColor: '#7C3AED', cursor: 'pointer' }} />;
+  return <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} style={{ width: '100%', accentColor: 'var(--studio-accent)', cursor: 'pointer' }} />;
 }
 function Chips({ opts, value, onChange, cols = 3 }: { opts: string[]; value: string; onChange: (v: string) => void; cols?: number }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 4 }}>
       {opts.map(o => {
         const active = value === o || value.toLowerCase() === o.toLowerCase();
-        return <button key={o} onClick={() => onChange(o)} style={{ padding: '4px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? '#7C3AED' : '#2A2A35'}`, background: active ? '#7C3AED' : '#1A1A1F', color: active ? '#fff' : '#9090A8', cursor: 'pointer' }}>{o}</button>;
+        return <button key={o} onClick={() => onChange(o)} style={{ padding: '4px 0', fontSize: 9, borderRadius: 5, border: `1px solid ${active ? 'var(--studio-accent)' : 'var(--studio-border)'}`, background: active ? 'var(--studio-accent)' : 'var(--studio-elevated)', color: active ? '#fff' : 'var(--studio-text-sec)', cursor: 'pointer' }}>{o}</button>;
       })}
     </div>
   );
@@ -2277,7 +2502,7 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
         <button onClick={onClose} style={{
           position: 'absolute', top: -14, right: -14,
           width: 30, height: 30, borderRadius: '50%',
-          border: '1px solid #2A2A35', background: '#111113', color: '#F1F0F5',
+          border: '1px solid var(--studio-border)', background: 'var(--studio-surface)', color: 'var(--studio-text)',
           cursor: 'pointer', fontSize: 16, fontWeight: 700,
           display: 'flex', alignItems: 'center', justifyContent: 'center',
           boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
@@ -2287,12 +2512,12 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
           style={{
             position: 'absolute', bottom: 10, right: 10,
             padding: '5px 12px', borderRadius: 6, background: '#111113cc',
-            color: '#9090A8', fontSize: 11, fontWeight: 600, textDecoration: 'none',
-            border: '1px solid #2A2A35',
+            color: 'var(--studio-text-sec)', fontSize: 11, fontWeight: 600, textDecoration: 'none',
+            border: '1px solid var(--studio-border)',
           }}>
           ↓ Download
         </a>
-        <p style={{ position: 'absolute', bottom: 10, left: 10, fontSize: 10, color: '#55556A', margin: 0 }}>
+        <p style={{ position: 'absolute', bottom: 10, left: 10, fontSize: 10, color: 'var(--studio-text-muted)', margin: 0 }}>
           Click outside or press Esc to close
         </p>
       </div>
