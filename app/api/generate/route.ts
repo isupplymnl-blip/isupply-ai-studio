@@ -3,8 +3,8 @@ import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { GoogleGenAI, type Part, type Content, type GenerateContentResponse } from '@google/genai';
-import { findMatchingImages } from '../../../lib/tagMatcher';
-import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../lib/storage';
+import { findMatchingImages } from '../../lib/tagMatcher';
+import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../lib/storage';
 
 // ─── Model map ────────────────────────────────────────────────────────────────
 // Gemini 3.1 Flash Image series (v1beta image-generation capable)

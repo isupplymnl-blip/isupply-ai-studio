@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import path from 'path';
-import { getGeneratedDir } from '../../../../lib/storage';
+import { getGeneratedDir } from '../../../lib/storage';
 
 export async function GET(
   _request: NextRequest,

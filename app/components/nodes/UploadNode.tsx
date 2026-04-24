@@ -3,7 +3,7 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { Handle, NodeProps, Position } from 'reactflow';
 import { StudioContext } from '../../context/StudioContext';
-import { uploadReferenceImage } from '../../../lib/uploadAsset';
+import { uploadReferenceImage } from '../../lib/uploadAsset';
 
 interface Asset {
   id: string;

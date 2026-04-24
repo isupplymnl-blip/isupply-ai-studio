@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
-import { getAssetsDbPath } from '../../../lib/storage';
+import { getAssetsDbPath } from '../../lib/storage';
 
 export async function GET() {
   try {

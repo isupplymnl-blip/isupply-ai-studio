@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile } from 'fs/promises';
 import { createClient } from '@supabase/supabase-js';
-import { urlToFilePath } from '../../../../lib/storage';
+import { urlToFilePath } from '../../../lib/storage';
 
 /**
  * POST /api/supabase/export

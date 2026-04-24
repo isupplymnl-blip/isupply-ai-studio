@@ -1,5 +1,5 @@
 import { readFileSync, writeFile } from 'fs';
-import { getJobStoreDbPath } from '../../lib/storage';
+import { getJobStoreDbPath } from './storage';
 
 export type JobStatus = 'pending' | 'completed' | 'error';
 

@@ -49,7 +49,8 @@
       "Bash(rtk ls *)",
       "Bash(awk END{print NR} *)",
       "Bash(rtk bash *)",
-      "Bash(powershell.exe *)"
+      "Bash(powershell.exe *)",
+      "Bash(rtk grep *)"
     ]
   },
   "enableAllProjectMcpServers": true,

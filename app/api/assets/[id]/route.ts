@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { readFile, writeFile, mkdir, unlink } from 'fs/promises';
 import path from 'path';
-import { getAssetsDbPath, urlToFilePath } from '../../../../lib/storage';
+import { getAssetsDbPath, urlToFilePath } from '../../../lib/storage';
 
 interface AssetRecord {
   id: string;

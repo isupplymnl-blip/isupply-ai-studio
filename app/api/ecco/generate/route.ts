@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
-import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../../lib/storage';
-import { findMatchingImages } from '../../../../lib/tagMatcher';
+import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../lib/storage';
+import { findMatchingImages } from '../../../lib/tagMatcher';
 import { jobStore } from '../../../lib/eccoJobStore';
 
 // Force Node.js runtime (not Edge) so background tasks and fs work

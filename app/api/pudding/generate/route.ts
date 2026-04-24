@@ -3,8 +3,8 @@ import { writeFile, mkdir, readFile } from 'fs/promises';
 import path from 'path';
 import sharp from 'sharp';
 import { GoogleGenAI, type Part, type Content, type GenerateContentResponse } from '@google/genai';
-import { findMatchingImages } from '../../../../lib/tagMatcher';
-import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../../lib/storage';
+import { findMatchingImages } from '../../../lib/tagMatcher';
+import { getGeneratedDir, makeGeneratedUrl, urlToFilePath } from '../../../lib/storage';
 
 // ─── Model resolution ────────────────────────────────────────────────────────
 // PuddingAPI bills per resolution — tier + resolution determine the model name.

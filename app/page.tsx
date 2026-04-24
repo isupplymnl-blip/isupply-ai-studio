@@ -2450,11 +2450,11 @@ function GlobalSettings({ activeProvider }: { activeProvider: 'gemini' | 'ecco' 
 }
 
 // ─── Micro helpers ────────────────────────────────────────────────────────────
-function TB({ onClick, children, accent, coral }: { onClick: () => void; children: React.ReactNode; accent?: boolean; coral?: boolean }) {
+function TB({ onClick, children, accent, coral, title }: { onClick: () => void; children: React.ReactNode; accent?: boolean; coral?: boolean; title?: string }) {
   const bg    = accent ? 'color-mix(in srgb, var(--studio-accent) 13%, transparent)' : coral ? '#F43F5E22' : 'var(--studio-elevated)';
   const color = accent ? 'var(--studio-accent)'   : coral ? '#F43F5E'   : 'var(--studio-text-sec)';
   const border= accent ? 'color-mix(in srgb, var(--studio-accent) 27%, transparent)' : coral ? '#F43F5E44' : 'var(--studio-border)';
-  return <button onClick={onClick} style={{ padding: '5px 11px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: `1px solid ${border}`, background: bg, color, cursor: 'pointer', whiteSpace: 'nowrap' }}>{children}</button>;
+  return <button onClick={onClick} title={title} style={{ padding: '5px 11px', fontSize: 11, fontWeight: 600, borderRadius: 6, border: `1px solid ${border}`, background: bg, color, cursor: 'pointer', whiteSpace: 'nowrap' }}>{children}</button>;
 }
 function Div() { return <div style={{ width: 1, height: 14, background: 'var(--studio-border)', margin: '0 2px' }} />; }
 function SideLabel({ children }: { children: React.ReactNode }) {
